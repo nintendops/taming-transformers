@@ -1,0 +1,42 @@
+model:
+  base_learning_rate: 4.5e-06
+  target: taming.models.vqgan.VQSegmentationModel
+  params:
+    embed_dim: 128
+    n_embed: 128
+    image_key: "segmentation"
+    n_labels: 3
+    ddconfig:
+      double_z: false
+      z_channels: 256
+      resolution: 256
+      in_channels: 3
+      out_ch: 3
+      ch: 128
+      ch_mult:
+      - 1
+      - 1
+      - 2
+      - 2
+      - 4
+      num_res_blocks: 2
+      attn_resolutions:
+      - 16
+      dropout: 0.0
+
+    lossconfig:
+      target: taming.modules.losses.segmentation.BCELossWithQuant
+      params:
+        codebook_weight: 1.0
+
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 4
+    train:
+      target: taming.data.owt.OWTBase
+      params:
+        size: 296
+        dataroot: "/home/ICT2000/chenh/Haiwei/Datasets/OWT/Catalina_Full/OutputImageSegmentation_Catalina/Images" 
+        crop_size: 256
+        onehot_segmentation: true
