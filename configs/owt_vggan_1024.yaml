@@ -39,6 +39,6 @@ data:
     train:
       target: taming.data.owt.OWTBase
       params:
-        size: 296
+        size: 1024
         dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
         crop_size: 256

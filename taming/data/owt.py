@@ -110,6 +110,7 @@ class OWTBase(Dataset):
         else:
             # normalizing to (-1, 1)?
             segmentation = (segmentation / 1.0 - 1.0).astype(np.float32)
+
         return image, segmentation
 
     def __getitem__(self, i):
