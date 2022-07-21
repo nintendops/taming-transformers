@@ -287,6 +287,7 @@ class Net2NetTransformer(pl.LightningModule):
         if N is not None:
             x = x[:N]
             c = c[:N]
+
         return x, c
 
     def shared_step(self, batch, batch_idx):
