@@ -17,7 +17,7 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/ckpt/owt_seg_vggan.ckpt
+        ckpt_path: logs/ckpt/owt_vggan_256.ckpt
         embed_dim: 256
         n_embed: 1024
         ddconfig:
@@ -42,7 +42,7 @@ model:
     cond_stage_config:
       target: taming.models.vqgan.VQSegmentationModel
       params:
-        ckpt_path: logs/ckpt/owt_vggan_256.ckpt
+        ckpt_path: logs/ckpt/owt_seg_vggan.ckpt
         embed_dim: 128
         n_embed: 1024
         image_key: "segmentation"
@@ -64,15 +64,17 @@ model:
           attn_resolutions:
           - 16
           dropout: 0.0
+        lossconfig:
+          target: taming.modules.losses.DummyLoss
 
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 6
+    batch_size: 2
     train:
       target: taming.data.owt.OWTBase
       params:
         size: 296
         dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
         crop_size: 256
-
+        onehot_segmentation: true

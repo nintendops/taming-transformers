@@ -80,7 +80,7 @@ class Net2NetTransformer(pl.LightningModule):
     def forward(self, x, c):
         # one step to produce the logits
         _, z_indices = self.encode_to_z(x)
-        _, c_indices = self.encode_to_c(c)
+        _, c_indices = self.encode_to_c(c.float())
 
         if self.training and self.pkeep < 1.0:
             mask = torch.bernoulli(self.pkeep*torch.ones(z_indices.shape,
@@ -91,13 +91,16 @@ class Net2NetTransformer(pl.LightningModule):
         else:
             a_indices = z_indices
 
-        cz_indices = torch.cat((c_indices, a_indices), dim=1)
+        if self.cond_stage_key == 'segmentation':
+            logits, _ = self.transformer(a_indices[:,:-1], c_indices)
+        else:
+            cz_indices = torch.cat((c_indices, a_indices), dim=1)
+            # make the prediction
+            logits, _ = self.transformer(cz_indices[:, :-1])
 
         # target includes all sequence elements (no need to handle first one
         # differently because we are conditioning)
         target = z_indices
-        # make the prediction
-        logits, _ = self.transformer(cz_indices[:, :-1])
         # cut off conditioning outputs - output i corresponds to p(z_i | z_{<i}, c)
         logits = logits[:, c_indices.shape[1]-1:]
 
@@ -112,7 +115,8 @@ class Net2NetTransformer(pl.LightningModule):
     @torch.no_grad()
     def sample(self, x, c, steps, temperature=1.0, sample=False, top_k=None,
                callback=lambda k: None):
-        x = torch.cat((c,x),dim=1)
+        if self.cond_stage_key != 'segmentation':
+            x = torch.cat((c,x),dim=1)
         block_size = self.transformer.get_block_size()
         assert not self.transformer.training
         if self.pkeep <= 0.0:
@@ -120,9 +124,15 @@ class Net2NetTransformer(pl.LightningModule):
             assert len(x.shape)==2
             noise_shape = (x.shape[0], steps-1)
             #noise = torch.randint(self.transformer.config.vocab_size, noise_shape).to(x)
-            noise = c.clone()[:,x.shape[1]-c.shape[1]:-1]
-            x = torch.cat((x,noise),dim=1)
-            logits, _ = self.transformer(x)
+            if self.cond_stage_key == 'segmentation':
+                noise = c.clone()[:,:-1]
+                x = torch.cat((x,noise),dim=1)
+                logits, _ = self.transformer(x, c)
+            else:
+                noise = c.clone()[:,x.shape[1]-c.shape[1]:-1]
+                x = torch.cat((x,noise),dim=1)
+                logits, _ = self.transformer(x)
+
             # take all logits for now and scale by temp
             logits = logits / temperature
             # optionally crop probabilities to only the top k options
@@ -140,13 +150,17 @@ class Net2NetTransformer(pl.LightningModule):
             else:
                 _, ix = torch.topk(probs, k=1, dim=-1)
             # cut off conditioning
-            x = ix[:, c.shape[1]-1:]
+            if self.cond_stage_key != 'segmentation':
+                x = ix[:, c.shape[1]-1:]
         else:
             for k in range(steps):
                 callback(k)
                 assert x.size(1) <= block_size # make sure model can see conditioning
                 x_cond = x if x.size(1) <= block_size else x[:, -block_size:]  # crop context if needed
-                logits, _ = self.transformer(x_cond)
+                if self.cond_stage_key == 'segmentation':
+                    logits, _ = self.transformer(x_cond, c)
+                else:
+                    logits, _ = self.transformer(x_cond)
                 # pluck the logits at the final step and scale by temperature
                 logits = logits[:, -1, :] / temperature
                 # optionally crop probabilities to only the top k options
@@ -162,7 +176,8 @@ class Net2NetTransformer(pl.LightningModule):
                 # append to the sequence and continue
                 x = torch.cat((x, ix), dim=1)
             # cut off conditioning
-            x = x[:, c.shape[1]:]
+            if self.cond_stage_key != 'segmentation':
+                x = x[:, c.shape[1]:]
         return x
 
     @torch.no_grad()
@@ -177,8 +192,8 @@ class Net2NetTransformer(pl.LightningModule):
         if self.downsample_cond_size > -1:
             c = F.interpolate(c, size=(self.downsample_cond_size, self.downsample_cond_size))
         quant_c, _, [_,_,indices] = self.cond_stage_model.encode(c)
-        if len(indices.shape) > 2:
-            indices = indices.view(c.shape[0], -1)
+        if self.cond_stage_key == 'segmentation' or len(indices.shape) > 2:
+            indices = indices.view(c.shape[0], -1)           
         return quant_c, indices
 
     @torch.no_grad()
@@ -200,7 +215,7 @@ class Net2NetTransformer(pl.LightningModule):
         else:
             x, c = self.get_xc(batch, N)
         x = x.to(device=self.device)
-        c = c.to(device=self.device)
+        c = c.to(device=self.device).float()
 
         quant_z, z_indices = self.encode_to_z(x)
         quant_c, c_indices = self.encode_to_c(c)
@@ -213,6 +228,7 @@ class Net2NetTransformer(pl.LightningModule):
                                    sample=True,
                                    top_k=top_k if top_k is not None else 100,
                                    callback=callback if callback is not None else lambda k: None)
+
         x_sample = self.decode_to_img(index_sample, quant_z.shape)
 
         # sample
