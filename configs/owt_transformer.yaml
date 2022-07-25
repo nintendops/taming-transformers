@@ -42,7 +42,7 @@ model:
     cond_stage_config:
       target: taming.models.vqgan.VQSegmentationModel
       params:
-        ckpt_path: logs/ckpt/owt_seg_vggan.ckpt
+        ckpt_path: logs/ckpt/owt_seg_vggan_256.ckpt
         embed_dim: 128
         n_embed: 1024
         image_key: "segmentation"

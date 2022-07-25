@@ -23,6 +23,7 @@ class OWTBase(Dataset):
 
         # file paths without extensions
         ids = [f[:-4].split('/')[-1] for f in glob.glob(os.path.join(dataroot, "*.JPG"))] # self.json_data["images"]     
+        ids = ids*20
 
         self.labels = {"image_ids": ids}
         # self.img_id_to_captions = dict()
@@ -112,6 +113,22 @@ class OWTBase(Dataset):
             segmentation = (segmentation / 1.0 - 1.0).astype(np.float32)
 
         return image, segmentation
+
+    def get(self, i):
+        img_path = self.img_id_to_filepath[self.labels["image_ids"][i]]
+        seg_path = self.img_id_to_segmentation_filepath[self.labels["image_ids"][i]]
+        image, segmentation = self.preprocess_image(img_path, seg_path)
+        # captions = self.img_id_to_captions[self.labels["image_ids"][i]]
+        # randomly draw one of all available captions per image
+        # caption = captions[np.random.randint(0, len(captions))]
+        example = {"image": image,
+                   # "caption": [str(caption[0])],
+                   "segmentation": segmentation,
+                   "img_path": img_path,
+                   "seg_path": seg_path,
+                   "filename_": img_path.split(os.sep)[-1]
+                    }
+        return example
 
     def __getitem__(self, i):
         img_path = self.img_id_to_filepath[self.labels["image_ids"][i]]
