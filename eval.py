@@ -38,22 +38,25 @@ def get_obj_from_str(string, reload=False):
     return getattr(importlib.import_module(module, package=None), cls)
 
 if __name__ == '__main__':
-    idx = 1
+    idx = 7
+    device = torch.device('cuda')
     now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     config_path = "configs/owt_transformer.yaml"
-    save_path = os.path.join("logs/eval",now)
+    save_path = os.path.join("logs/eval", now)
+    os.makedirs(save_path, exist_ok=True)
     config = OmegaConf.load(config_path)
     config ['data']['params']['batch_size'] = 1
     # config['data']['params']['train']['params']['dataroot'] = "/home/ICT2000/chenh/Haiwei/Datasets/OWT/Catalina_Full/OutputImageSegmentation_Catalina/Images/"
 
     # instantiate model
-    model = Net2NetTransformer(**config.model.params).cuda()
+    model = Net2NetTransformer(**config.model.params).to(device)
 
     # loading checkpoint
     ckpt_path = "logs/ckpt/owt_transformer_256.ckpt"
-    sd = torch.load(ckpt_path)["state_dict"]
-    missing, unexpected = model.load_state_dict(sd, strict=False)
-
+    sd = torch.load(ckpt_path, map_location=device)["state_dict"]
+    # missing, unexpected = model.load_state_dict(sd, strict=False)
+    model.load_state_dict(sd)
+    
     data = instantiate_from_config(config.data)
     data.prepare_data()
     data.setup()
@@ -66,7 +69,7 @@ if __name__ == '__main__':
     write_images(os.path.join(save_path, 'src_image.png'), image)
     write_images(os.path.join(save_path, 'src_segmentation.png'), segmentation)
 
-    tensify = lambda x: torch.from_numpy(x[None]).permute(0,3,1,2).contiguous().float().cuda()
+    tensify = lambda x: torch.from_numpy(x[None]).permute(0,3,1,2).contiguous().float().to(device)
     tensor_to_numpy = lambda x:x.detach().cpu().numpy()[0].transpose(1,2,0)
 
     seg_tensor = tensify(segmentation)
@@ -93,7 +96,7 @@ if __name__ == '__main__':
 
     temperature = 1.0
     top_k = 100
-    update_every = 20
+    update_every = 10
 
     start_t = time.time()
 
