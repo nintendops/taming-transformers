@@ -2,6 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.vqgan.VQModel
   params:
+    # ckpt_path: logs/ckpt/owt_vggan_256.ckpt
     embed_dim: 256
     n_embed: 1024
     image_key: "image"
@@ -41,4 +42,12 @@ data:
       params:
         size: 296
         dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
+        # dataroot: "/home/ICT2000/chenh/Haiwei/Datasets/OWT/Catalina_Full/OutputImageSegmentation_Catalina/Images/"
         crop_size: 256
+    # test:
+    #   target: taming.data.owt.OWTBase
+    #   params:
+    #     size: 296
+    #     dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
+    #     # dataroot: "/home/ICT2000/chenh/Haiwei/Datasets/OWT/Catalina_Full/OutputImageSegmentation_Catalina/Images/"
+    #     crop_size: 256

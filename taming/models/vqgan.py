@@ -1,13 +1,24 @@
+import os
 import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
-
+import cv2
+import numpy as np
 from main import instantiate_from_config
 
 from taming.modules.diffusionmodules.model import Encoder, Decoder
 from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 from taming.modules.vqvae.quantize import GumbelQuantize
 from taming.modules.vqvae.quantize import EMAVectorQuantizer
+
+def write_images(path, image, n_row=1):
+    image = ((image + 1) * 255 / 2).astype(np.uint8)
+    if image.ndim == 3:
+        if image.shape[2] == 3:
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        if image.shape[2] == 4:
+            image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
+    cv2.imwrite('{}'.format(str(path)), np.squeeze(image))
 
 class VQModel(pl.LightningModule):
     def __init__(self,
@@ -117,6 +128,35 @@ class VQModel(pl.LightningModule):
         self.log_dict(log_dict_ae)
         self.log_dict(log_dict_disc)
         return self.log_dict
+
+    def test_step(self, batch, batch_idx):
+        from PIL import Image
+
+        x = self.get_input(batch, self.image_key)
+        xrec, qloss = self(x)
+        aeloss, log_dict_ae = self.loss(qloss, x, xrec, 0, self.global_step,
+                                            last_layer=self.get_last_layer(), split="val")
+
+        discloss, log_dict_disc = self.loss(qloss, x, xrec, 1, self.global_step,
+                                            last_layer=self.get_last_layer(), split="val")
+        rec_loss = log_dict_ae["val/rec_loss"]
+        self.log("val/rec_loss", rec_loss,
+                   prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val/aeloss", aeloss,
+                   prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
+        self.log_dict(log_dict_ae)
+        self.log_dict(log_dict_disc)
+        self.debug_log_image(x, batch_idx, tag='gt')
+        self.debug_log_image(xrec, batch_idx)
+        return self.log_dict
+
+    def debug_log_image(self, rec, idx, tag="recon"):
+        nb = rec.shape[0]
+        rec = torch.clamp(rec, min=-1.0, max=1.0)
+        rec = 2 * (rec - rec.min()) / (rec.max() - rec.min()) - 1
+        for i in range(nb):
+            img = rec[i].cpu().detach().numpy().transpose(1,2,0)
+            write_images(os.path.join("logs/eval", f"{tag}_{idx}_{i}.png"), img)
 
     def configure_optimizers(self):
         lr = self.learning_rate

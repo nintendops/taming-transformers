@@ -567,7 +567,7 @@ if __name__ == "__main__":
                 melk()
                 raise
         if not opt.no_test and not trainer.interrupted:
-            trainer.test(model, data)
+            trainer.test(model, data._test_dataloader())
     except Exception:
         if opt.debug and trainer.global_rank==0:
             try:
