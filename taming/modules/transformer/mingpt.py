@@ -282,7 +282,7 @@ class CodeGPT(nn.Module):
 
 class CondGPT(nn.Module):
     """  the full GPT language model, with a context size of block_size """
-    def __init__(self, vocab_size, block_size, n_layer=12, n_head=8, n_embd=256,
+    def __init__(self, vocab_size, vocab_size_cond, block_size, n_layer=12, n_head=8, n_embd=256,
                  embd_pdrop=0., resid_pdrop=0., attn_pdrop=0., n_unmasked=0):
         super().__init__()
         config = GPTConfig(vocab_size=vocab_size, block_size=block_size,
@@ -291,7 +291,7 @@ class CondGPT(nn.Module):
                            n_unmasked=n_unmasked)
         # input embedding stem
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
-        self.cond_emb = nn.Embedding(config.vocab_size, config.n_embd)
+        self.cond_emb = nn.Embedding(vocab_size_cond, config.n_embd)
         self.pos_emb = nn.Parameter(torch.zeros(1, config.block_size, config.n_embd))
         self.drop = nn.Dropout(config.embd_pdrop)
         # transformer

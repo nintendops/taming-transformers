@@ -6,7 +6,8 @@ model:
     transformer_config:
       target: taming.modules.transformer.mingpt.CondGPT
       params:
-        vocab_size: 1024
+        vocab_size: 8192
+        vocab_size_cond: 1024
         block_size: 512  # = 256 + 256 = dim(vqgan_latent_space,16x16) + dim(conditional_builder.embedding_dim)
         n_layer: 40
         n_head: 16
@@ -17,9 +18,9 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/ckpt/owt_vggan_256.ckpt
+        ckpt_path: /home/ICT2000/chenh/taming-transformers/logs/2022-07-28T00-02-08_usc_pretrained_vggan/checkpoints/last.ckpt
         embed_dim: 256
-        n_embed: 1024
+        n_embed: 8192
         ddconfig:
           double_z: false
           z_channels: 256
@@ -42,7 +43,7 @@ model:
     cond_stage_config:
       target: taming.models.vqgan.VQSegmentationModel
       params:
-        ckpt_path: logs/ckpt/owt_seg_vggan_256.ckpt
+        ckpt_path: /home/ICT2000/chenh/taming-transformers/logs/2022-08-01T01-37-16_use_2048_cond_stage/checkpoints/last.ckpt
         embed_dim: 128
         n_embed: 1024
         image_key: "segmentation"
@@ -74,7 +75,9 @@ data:
     train:
       target: taming.data.owt.OWTBase
       params:
-        size: 296
-        dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
+        size: 2048
+        # dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
+        dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
+        # dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
         crop_size: 256
         onehot_segmentation: true

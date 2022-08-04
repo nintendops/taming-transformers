@@ -23,7 +23,6 @@ model:
       attn_resolutions:
       - 16
       dropout: 0.0
-
     lossconfig:
       target: taming.modules.losses.segmentation.BCELossWithQuant
       params:
@@ -36,7 +35,8 @@ data:
     train:
       target: taming.data.owt.OWTBase
       params:
-        size: 296
-        dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
+        size: 2048
+        dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
+        # dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
         crop_size: 256
         onehot_segmentation: true
