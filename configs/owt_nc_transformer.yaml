@@ -54,3 +54,4 @@ data:
         # dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
         crop_size: 256
         onehot_segmentation: true
+

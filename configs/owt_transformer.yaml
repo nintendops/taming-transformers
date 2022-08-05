@@ -18,7 +18,7 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: /home/ICT2000/chenh/taming-transformers/logs/2022-07-28T00-02-08_usc_pretrained_vggan/checkpoints/last.ckpt
+        ckpt_path: logs/2022-07-28T00-02-08_usc_pretrained_vggan/checkpoints/last.ckpt
         embed_dim: 256
         n_embed: 8192
         ddconfig:
@@ -43,7 +43,7 @@ model:
     cond_stage_config:
       target: taming.models.vqgan.VQSegmentationModel
       params:
-        ckpt_path: /home/ICT2000/chenh/taming-transformers/logs/2022-08-01T01-37-16_use_2048_cond_stage/checkpoints/last.ckpt
+        ckpt_path: logs/2022-08-01T01-37-16_use_2048_cond_stage/checkpoints/last.ckpt
         embed_dim: 128
         n_embed: 1024
         image_key: "segmentation"
@@ -77,7 +77,8 @@ data:
       params:
         size: 2048
         # dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
-        dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
+        dataroot: "/home/ICT2000/chenh/Haiwei/Datasets/OWT/USC_Galen_Center"
+        # dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
         # dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
         crop_size: 256
         onehot_segmentation: true
