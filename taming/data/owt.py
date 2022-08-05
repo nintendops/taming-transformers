@@ -147,6 +147,40 @@ class OWTBase(Dataset):
         return example
 
 
+class OWTToken(OWTBase):
+    def __init__(self, crop_size=None, dataroot="", dataset_name="", force_no_crop=False, given_files=None):
+        
+        self.crop_size = crop_size 
+
+        # file paths without extensions
+        ids = [f[:-4].split('/')[-1] for f in glob.glob(os.path.join(dataroot, "*.JPG"))] # self.json_data["images"]     
+        ids = ids*20
+
+        self.labels = {"image_ids": ids}
+        # self.img_id_to_captions = dict()
+        self.img_id_to_filepath = dict()
+        self.img_id_to_segmentation_filepath = dict()
+
+        for iid in tqdm(ids, desc='ImgToPath'):
+            self.img_id_to_filepath[iid] =  os.path.join(dataroot, dataset_name, f'{iid}_img.npy')
+            self.img_id_to_segmentation_filepath[iid] =  os.path.join(dataroot, f'{iid}_cond.npy')
+
+        if self.split=="validation":
+            self.cropper = albumentations.CenterCrop(height=self.crop_size, width=self.crop_size)
+        else:
+            self.cropper = albumentations.RandomCrop(height=self.crop_size, width=self.crop_size)
+
+        self.preprocessor = albumentations.Compose(
+            [self.cropper],
+            additional_targets={"segmentation": "image"})
+
+    def preprocess_image(self, image_path, segmentation_path):
+        image = np.load(image_path)
+        segmentation = np.load(segmentation_path)
+        processed = self.preprocessor(image=image, segmentation=segmentation)
+        image, segmentation = processed["image"], processed["segmentation"]
+        return image, segmentation
+
 # class CustomBase(Dataset):
 #     def __init__(self, *args, **kwargs):
 #         super().__init__()

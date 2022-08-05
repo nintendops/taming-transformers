@@ -79,7 +79,7 @@ class Net2NetTransformer(pl.LightningModule):
 
     def forward(self, x, c):
         # one step to produce the logits
-        _, z_indices = self.encode_to_z(x)
+        _, z_indices = self.encode_to_z(x.float())
         _, c_indices = self.encode_to_c(c.float())
 
         if self.training and self.pkeep < 1.0:

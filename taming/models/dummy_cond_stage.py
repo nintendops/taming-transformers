@@ -2,9 +2,9 @@ from torch import Tensor
 
 
 class DummyCondStage:
-    def __init__(self, conditional_key):
+    def __init__(self, conditional_key=None):
         self.conditional_key = conditional_key
-        self.train = None
+        self.train = False
 
     def eval(self):
         return self
