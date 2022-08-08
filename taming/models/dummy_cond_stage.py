@@ -11,7 +11,7 @@ class DummyCondStage:
 
     @staticmethod
     def encode(c: Tensor):
-        return c, None, (None, None, c)
+        return c, None, (None, None, c.long())
 
     @staticmethod
     def decode(c: Tensor):

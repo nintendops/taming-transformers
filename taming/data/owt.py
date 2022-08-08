@@ -149,7 +149,7 @@ class OWTBase(Dataset):
 
 class OWTToken(OWTBase):
     def __init__(self, crop_size=None, dataroot="", dataset_name="", force_no_crop=False, given_files=None):
-        
+        self.split = 'train'
         self.crop_size = crop_size 
 
         # file paths without extensions
@@ -163,7 +163,7 @@ class OWTToken(OWTBase):
 
         for iid in tqdm(ids, desc='ImgToPath'):
             self.img_id_to_filepath[iid] =  os.path.join(dataroot, dataset_name, f'{iid}_img.npy')
-            self.img_id_to_segmentation_filepath[iid] =  os.path.join(dataroot, f'{iid}_cond.npy')
+            self.img_id_to_segmentation_filepath[iid] =  os.path.join(dataroot, dataset_name, f'{iid}_cond.npy')
 
         if self.split=="validation":
             self.cropper = albumentations.CenterCrop(height=self.crop_size, width=self.crop_size)

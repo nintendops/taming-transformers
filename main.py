@@ -216,8 +216,9 @@ class SetupCallback(Callback):
 
 
 class ImageLogger(Callback):
-    def __init__(self, batch_frequency, max_images, clamp=True, increase_log_steps=True):
+    def __init__(self, batch_frequency, max_images, clamp=True, increase_log_steps=True, disable_image_logging=False):
         super().__init__()
+        self.disable_image_logging = disable_image_logging
         self.batch_freq = batch_frequency
         self.max_images = max_images
         self.logger_log_images = {
@@ -270,6 +271,8 @@ class ImageLogger(Callback):
             Image.fromarray(grid).save(path)
 
     def log_img(self, pl_module, batch, batch_idx, split="train"):
+        if self.disable_image_logging:
+            return
         if (self.check_frequency(batch_idx) and  # batch_idx % self.batch_freq == 0
                 hasattr(pl_module, "log_images") and
                 callable(pl_module.log_images) and
@@ -505,7 +508,8 @@ if __name__ == "__main__":
                 "params": {
                     "batch_frequency": 750,
                     "max_images": 4,
-                    "clamp": True
+                    "clamp": True,
+                    "disable_image_logging": config.disable_image_logging is not None and config.disable_image_logging is True
                 }
             },
             "learning_rate_logger": {

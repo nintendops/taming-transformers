@@ -27,7 +27,8 @@ data:
     train:
       target: taming.data.owt.OWTToken
       params:
-        size: 2048
         dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
         dataset_name: "tokenized_2048"
         crop_size: 16 # 256 / 16 = 16
+
+disable_image_logging: True
