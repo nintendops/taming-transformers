@@ -34,6 +34,20 @@ def nonlinearity(x):
 def Normalize(in_channels):
     return torch.nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=1e-6, affine=True)
 
+class PaddingFreeConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0):
+        super().__init__()
+        self.conv1 = torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=0)
+        self.conv2 = torch.nn.ConvTranspose2d(out_channels, out_channels, kernel_size, stride=stride, padding=0)
+
+    @property
+    def weight(self):
+        return self.conv2.weight
+    
+
+    def forward(self, x):
+        return self.conv2(self.conv1(x))
+
 
 class Upsample(nn.Module):
     def __init__(self, in_channels, with_conv):
@@ -77,36 +91,37 @@ class Downsample(nn.Module):
 
 class ResnetBlock(nn.Module):
     def __init__(self, *, in_channels, out_channels=None, conv_shortcut=False,
-                 dropout, temb_channels=512):
+                 dropout, temb_channels=512, padding_free=False):
         super().__init__()
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
         self.use_conv_shortcut = conv_shortcut
 
+        conv_choice = PaddingFreeConv if padding_free else torch.nn.Conv2d
+
         self.norm1 = Normalize(in_channels)
-        self.conv1 = torch.nn.Conv2d(in_channels,
-                                     out_channels,
-                                     kernel_size=3,
-                                     stride=1,
-                                     padding=1)
+        self.conv1 = conv_choice(in_channels,
+                                 out_channels,
+                                 kernel_size=3,
+                                 stride=1, padding=1)
         if temb_channels > 0:
             self.temb_proj = torch.nn.Linear(temb_channels,
                                              out_channels)
         self.norm2 = Normalize(out_channels)
         self.dropout = torch.nn.Dropout(dropout)
-        self.conv2 = torch.nn.Conv2d(out_channels,
-                                     out_channels,
-                                     kernel_size=3,
-                                     stride=1,
-                                     padding=1)
+        self.conv2 = conv_choice(out_channels,
+                                 out_channels,
+                                 kernel_size=3,
+                                 stride=1,
+                                 padding=1)
         if self.in_channels != self.out_channels:
             if self.use_conv_shortcut:
-                self.conv_shortcut = torch.nn.Conv2d(in_channels,
-                                                     out_channels,
-                                                     kernel_size=3,
-                                                     stride=1,
-                                                     padding=1)
+                self.conv_shortcut = conv_choice(in_channels,
+                                                 out_channels,
+                                                 kernel_size=3,
+                                                 stride=1,
+                                                 padding=1)
             else:
                 self.nin_shortcut = torch.nn.Conv2d(in_channels,
                                                     out_channels,
@@ -436,7 +451,7 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks,
                  attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
-                 resolution, z_channels, give_pre_end=False, **ignorekwargs):
+                 resolution, z_channels, give_pre_end=False, padding_free=True, **ignorekwargs):
         super().__init__()
         self.ch = ch
         self.temb_ch = 0
@@ -445,6 +460,9 @@ class Decoder(nn.Module):
         self.resolution = resolution
         self.in_channels = in_channels
         self.give_pre_end = give_pre_end
+
+        conv_choice = torch.nn.Conv2d if not padding_free else PaddingFreeConv 
+        padding = 0 if padding_free else 1
 
         # compute in_ch_mult, block_in and curr_res at lowest res
         in_ch_mult = (1,)+tuple(ch_mult)
@@ -455,23 +473,25 @@ class Decoder(nn.Module):
             self.z_shape, np.prod(self.z_shape)))
 
         # z to block_in
-        self.conv_in = torch.nn.Conv2d(z_channels,
-                                       block_in,
-                                       kernel_size=3,
-                                       stride=1,
-                                       padding=1)
+        self.conv_in = conv_choice(z_channels,
+                                   block_in,
+                                   kernel_size=3,
+                                   stride=1,
+                                   padding=padding)
 
         # middle
         self.mid = nn.Module()
         self.mid.block_1 = ResnetBlock(in_channels=block_in,
                                        out_channels=block_in,
                                        temb_channels=self.temb_ch,
-                                       dropout=dropout)
+                                       dropout=dropout,
+                                       padding_free=padding_free)
         self.mid.attn_1 = AttnBlock(block_in)
         self.mid.block_2 = ResnetBlock(in_channels=block_in,
                                        out_channels=block_in,
                                        temb_channels=self.temb_ch,
-                                       dropout=dropout)
+                                       dropout=dropout,
+                                       padding_free=padding_free)
 
         # upsampling
         self.up = nn.ModuleList()
@@ -483,7 +503,8 @@ class Decoder(nn.Module):
                 block.append(ResnetBlock(in_channels=block_in,
                                          out_channels=block_out,
                                          temb_channels=self.temb_ch,
-                                         dropout=dropout))
+                                         dropout=dropout,
+                                         padding_free=padding_free))
                 block_in = block_out
                 if curr_res in attn_resolutions:
                     attn.append(AttnBlock(block_in))
@@ -497,11 +518,11 @@ class Decoder(nn.Module):
 
         # end
         self.norm_out = Normalize(block_in)
-        self.conv_out = torch.nn.Conv2d(block_in,
-                                        out_ch,
-                                        kernel_size=3,
-                                        stride=1,
-                                        padding=1)
+        self.conv_out = conv_choice(block_in,
+                                    out_ch,
+                                    kernel_size=3,
+                                    stride=1,
+                                    padding=padding)
 
     def forward(self, z):
         #assert z.shape[1:] == self.z_shape[1:]
@@ -510,13 +531,22 @@ class Decoder(nn.Module):
         # timestep embedding
         temb = None
 
+        # print("Tensor In: Shape", z.shape)
+        # import ipdb; ipdb.set_trace()
+
         # z to block_in
         h = self.conv_in(z)
+        # print("Tensor conv_in: Shape", z.shape)
+        # import ipdb; ipdb.set_trace()
 
         # middle
         h = self.mid.block_1(h, temb)
+        # print("Tensor mid block 1: Shape", z.shape)
+        # import ipdb; ipdb.set_trace()
         h = self.mid.attn_1(h)
         h = self.mid.block_2(h, temb)
+        # print("Tensor mid block 2: Shape", z.shape)
+        # import ipdb; ipdb.set_trace()
 
         # upsampling
         for i_level in reversed(range(self.num_resolutions)):

@@ -35,8 +35,8 @@ data:
     train:
       target: taming.data.owt.OWTBase
       params:
-        size: 2048
-        dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
-        # dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
+        size: 512
+        # dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
+        dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
         crop_size: 256
         onehot_segmentation: true

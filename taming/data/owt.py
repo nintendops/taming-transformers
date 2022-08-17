@@ -11,8 +11,8 @@ from PIL import Image
 
 class OWTBase(Dataset):
     def __init__(self, size=None, dataroot="", onehot_segmentation=False, 
-                 crop_size=None, force_no_crop=False, given_files=None):
-        self.split = 'train' # self.get_split()
+                 crop_size=None, force_no_crop=False, given_files=None, split='train'):
+        self.split = split # self.get_split()
         self.size = size
         if crop_size is None:
             self.crop_size = size

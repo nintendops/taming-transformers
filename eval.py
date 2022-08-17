@@ -37,108 +37,144 @@ def get_obj_from_str(string, reload=False):
         importlib.reload(module_imp)
     return getattr(importlib.import_module(module, package=None), cls)
 
+
 if __name__ == '__main__':
-    idx = 7
     device = torch.device('cuda')
     now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    # config_path = "configs/owt_nc_transformer.yaml"
     config_path = "configs/owt_transformer.yaml"
     save_path = os.path.join("logs/eval", now)
     os.makedirs(save_path, exist_ok=True)
     config = OmegaConf.load(config_path)
     config ['data']['params']['batch_size'] = 1
-    # config['data']['params']['train']['params']['dataroot'] = "/home/ICT2000/chenh/Haiwei/Datasets/OWT/Catalina_Full/OutputImageSegmentation_Catalina/Images/"
-
+    unconditional = config.model.params.cond_stage_config == "__is_unconditional__"
+    
     # instantiate model
+    print("Instantiating model...")
     model = Net2NetTransformer(**config.model.params).to(device)
-
+    print("Done!")
+    
     # loading checkpoint
-    ckpt_path = "logs/ckpt/owt_transformer_256.ckpt"
+    ckpt_path = "logs/2022-08-02T07-32-14_usc_512_transformer/checkpoints/last.ckpt"
     sd = torch.load(ckpt_path, map_location=device)["state_dict"]
     # missing, unexpected = model.load_state_dict(sd, strict=False)
+    print("Loading checkpoint from %s..."%ckpt_path)
     model.load_state_dict(sd)
+    print("Done!")
     
+    print("instantiating Dataset...")
+    config.data.params.train.params.split = "validation"
     data = instantiate_from_config(config.data)
     data.prepare_data()
     data.setup()
+    print("Done!")
     dataset = data.datasets['train']
     dataset_iter = iter(data._train_dataloader())
-    batch = dataset[idx]
-    segmentation = batch['segmentation']
-    image = batch['image']
 
-    write_images(os.path.join(save_path, 'src_image.png'), image)
-    write_images(os.path.join(save_path, 'src_segmentation.png'), segmentation)
-
-    tensify = lambda x: torch.from_numpy(x[None]).permute(0,3,1,2).contiguous().float().to(device)
-    tensor_to_numpy = lambda x:x.detach().cpu().numpy()[0].transpose(1,2,0)
-
-    seg_tensor = tensify(segmentation)
-    c_code, c_indices = model.encode_to_c(seg_tensor)
-    seg_rec = model.cond_stage_model.decode(c_code)
-    seg_rec = F.softmax(seg_rec,dim=1)
-
-    nb = c_code.shape[0]
-    codebook_size = config.model.params.first_stage_config.params.embed_dim
-    z_indices_shape = c_indices.shape
-    c_code_res = 16
-    res = 256
-    c_code_res = int(res**0.5)
-    z_indices_shape = [nb,res]
-    z_code_shape = [nb, codebook_size,c_code_res, c_code_res]
-    z_indices = torch.randint(codebook_size, z_indices_shape, device=model.device)
-    # x_sample = model.decode_to_img(z_indices, z_code_shape)
-
-
-    idx = z_indices
-    idx = idx.reshape(z_code_shape[0],z_code_shape[2],z_code_shape[3])
-    cidx = c_indices
-    cidx = cidx.reshape(c_code.shape[0],c_code.shape[2],c_code.shape[3])
-
-    temperature = 1.0
-    top_k = 100
-    update_every = 10
-
-    start_t = time.time()
-
-    for i in range(0, z_code_shape[2]-0):
-      if i <= 8:
-        local_i = i
-      elif z_code_shape[2]-i < 8:
-        local_i = 16-(z_code_shape[2]-i)
-      else:
-        local_i = 8
-      for j in range(0,z_code_shape[3]-0):
-        if j <= 8:
-          local_j = j
-        elif z_code_shape[3]-j < 8:
-          local_j = 16-(z_code_shape[3]-j)
+    def eval(batch, image_idx, do_not_generate=False):
+        print(f"Generating samples for batch data {image_idx}")
+        image = batch['image']
+        if unconditional:
+            segmentation = image
         else:
-          local_j = 8
-        
-        i_start = i-local_i
-        i_end = i_start+16
-        j_start = j-local_j
-        j_end = j_start+16
-        
-        patch = idx[:,i_start:i_end,j_start:j_end]
-        patch = patch.reshape(patch.shape[0],-1)
-        cpatch = cidx[:, i_start:i_end, j_start:j_end]
-        cpatch = cpatch.reshape(cpatch.shape[0], -1)
-        logits,_ = model.transformer(patch[:,:-1], cpatch)
-        logits = logits[:, -256:, :]
-        logits = logits.reshape(z_code_shape[0],16,16,-1)
-        logits = logits[:,local_i,local_j,:]
-        logits = logits/temperature
-        
-        if top_k is not None:
-          logits = model.top_k_logits(logits, top_k)
+            segmentation = batch['segmentation']
+            write_images(os.path.join(save_path, f'image_{image_idx}_segmentation.png'), segmentation)
+        write_images(os.path.join(save_path, f'image_{image_idx}_src.png'), image)
 
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        idx[:,i,j] = torch.multinomial(probs, num_samples=1)
+        if do_not_generate:
+            return
 
-        step = i*z_code_shape[3]+j
-        if step%update_every==0 or step==z_code_shape[2]*z_code_shape[3]-1:
-          x_sample = model.decode_to_img(idx, z_code_shape)
-          print(f"Time: {time.time() - start_t} seconds")
-          print(f"Step: ({i},{j}) | Local: ({local_i},{local_j}) | Crop: ({i_start}:{i_end},{j_start}:{j_end})")
-          write_images(os.path.join(save_path, f'recon_step_{step}.png'), tensor_to_numpy(x_sample))
+        tensify = lambda x: torch.from_numpy(x[None]).permute(0,3,1,2).contiguous().float().to(device)
+        tensor_to_numpy = lambda x:x.detach().cpu().numpy()[0].transpose(1,2,0)
+
+        seg_tensor = tensify(segmentation)
+        c_code, c_indices = model.encode_to_c(seg_tensor)
+        
+        if not unconditional:
+            seg_rec = model.cond_stage_model.decode(c_code)
+            seg_rec = F.softmax(seg_rec,dim=1)
+
+        nb = c_code.shape[0]
+        codebook_size = config.model.params.first_stage_config.params.embed_dim
+        res = 256
+        c_code_res = int(res**0.5)
+        z_indices_shape = [nb,res]
+        z_code_shape = [nb, codebook_size,c_code_res, c_code_res]
+
+        # using random codebook entries
+        z_indices = torch.randint(codebook_size, z_indices_shape, device=model.device)
+
+        # debug testing: replace random z indices with that of an encoded batch image
+        # x = tensify(batch['image'])
+        # c = x
+        # _, z_indices = model.encode_to_z(x)
+        # _, c_indices = model.encode_to_c(c)
+
+
+        if not unconditional:
+            cidx = c_indices
+            cidx = cidx.reshape(c_code.shape[0],c_code.shape[2],c_code.shape[3])
+
+        temperature = 1.0
+        top_k = 100
+        update_every = 100000
+        start_t = time.time()
+        start_i = 0
+        start_j = 0
+        n_sample = 4
+        for sample in range(n_sample):        
+            idx = z_indices
+            idx = idx.reshape(z_code_shape[0],z_code_shape[2],z_code_shape[3])
+            for i in range(start_i, z_code_shape[2]-0):
+              if i <= 8:
+                local_i = i
+              elif z_code_shape[2]-i < 8:
+                local_i = 16-(z_code_shape[2]-i)
+              else:
+                local_i = 8
+              for j in range(start_j, z_code_shape[3]-0):
+                if j <= 8:
+                  local_j = j
+                elif z_code_shape[3]-j < 8:
+                  local_j = 16-(z_code_shape[3]-j)
+                else:
+                  local_j = 8
+                
+                i_start = i-local_i
+                i_end = i_start+16
+                j_start = j-local_j
+                j_end = j_start+16
+                # print(i_start, i_end, j_start, j_end)
+                patch = idx[:,i_start:i_end,j_start:j_end]
+                patch = patch.reshape(patch.shape[0],-1)
+                if unconditional:
+                    patch = torch.cat((c_indices, patch), dim=1)
+                    logits,_ = model.transformer(patch[:,:-1])
+                else:
+                    cpatch = cidx[:, i_start:i_end, j_start:j_end]
+                    cpatch = cpatch.reshape(cpatch.shape[0], -1)
+                    # patch = torch.cat((cpatch, patch), dim=1)
+                    logits,_ = model.transformer(patch[:,:-1], cpatch)
+
+                logits = logits[:, -256:, :]
+                logits = logits.reshape(z_code_shape[0],16,16,-1)
+                logits = logits[:,local_i,local_j,:]
+                logits = logits/temperature
+                
+                if top_k is not None:
+                  logits = model.top_k_logits(logits, top_k)
+                probs = torch.nn.functional.softmax(logits, dim=-1)
+                idx[:,i,j] = torch.multinomial(probs, num_samples=1)
+                step = i*z_code_shape[3]+j
+                if step==0 or step==z_code_shape[2]*z_code_shape[3]-1:
+                  x_sample = model.decode_to_img(idx, z_code_shape)
+                  print(f"Time: {time.time() - start_t} seconds")
+                  print(f"Sample: {sample} | Step: ({i},{j}) | Local: ({local_i},{local_j}) | Crop: ({i_start}:{i_end},{j_start}:{j_end})")
+                  write_images(os.path.join(save_path, f"image_{image_idx}_sample_{sample}.png"), tensor_to_numpy(x_sample))
+
+    data_select = [5,13,16,20,23,26,28] # range(len(dataset))
+
+    for i in data_select:
+        batch_data = dataset[i]
+        eval(batch_data, i, False)
+
