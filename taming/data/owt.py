@@ -11,9 +11,10 @@ from PIL import Image
 
 class OWTBase(Dataset):
     def __init__(self, size=None, dataroot="", onehot_segmentation=False, 
-                 crop_size=None, force_no_crop=False, given_files=None, split='train'):
+                 crop_size=None, force_no_crop=False, given_files=None, multiscale_factor=1.0, split='train'):
         self.split = split # self.get_split()
         self.size = size
+        self.ms_factor = multiscale_factor
         if crop_size is None:
             self.crop_size = size
         else:
@@ -54,6 +55,9 @@ class OWTBase(Dataset):
                 [self.rescaler],
                 additional_targets={"segmentation": "image"})
 
+        if self.multiscale_factor < 1.0:
+            self.rescaler_2 = albumentations.Resize(height=int(self.multiscale_factor*self.size), width=int(self.multiscale_factor*self.size))
+
     def preprocess_image(self, image_path, segmentation_path):
         image = Image.open(image_path)
         if not image.mode == "RGB":
@@ -71,7 +75,16 @@ class OWTBase(Dataset):
 
         processed = self.preprocessor(image=image, segmentation=segmentation)
         image, segmentation = processed["image"], processed["segmentation"]
+
+        if self.multiscale_factor < 1.0:
+            image_rescaled = self.rescaler_2(image)
+
         image = (image / 127.5 - 1.0).astype(np.float32)
+
+        if self.multiscale_factor < 1.0:
+            image_rescaled = (image_rescaled / 127.5 - 1.0).astype(np.float32)
+        else:
+            image_rescaled = image
 
         if self.onehot:
             assert segmentation.dtype == np.uint8
@@ -86,16 +99,17 @@ class OWTBase(Dataset):
             # normalizing to (-1, 1)?
             segmentation = (segmentation / 1.0 - 1.0).astype(np.float32)
 
-        return image, segmentation
+        return image, segmentation, image_rescaled
 
     def get(self, i):
         img_path = self.img_id_to_filepath[self.labels["image_ids"][i]]
         seg_path = self.img_id_to_segmentation_filepath[self.labels["image_ids"][i]]
-        image, segmentation = self.preprocess_image(img_path, seg_path)
+        image, segmentation, image_rescaled = self.preprocess_image(img_path, seg_path)
         # captions = self.img_id_to_captions[self.labels["image_ids"][i]]
         # randomly draw one of all available captions per image
         # caption = captions[np.random.randint(0, len(captions))]
         example = {"image": image,
+                   "image_rescale": image_rescaled,
                    # "caption": [str(caption[0])],
                    "segmentation": segmentation,
                    "img_path": img_path,
@@ -107,7 +121,7 @@ class OWTBase(Dataset):
     def __getitem__(self, i):
         img_path = self.img_id_to_filepath[self.labels["image_ids"][i]]
         seg_path = self.img_id_to_segmentation_filepath[self.labels["image_ids"][i]]
-        image, segmentation = self.preprocess_image(img_path, seg_path)
+        image, segmentation, image_rescaled = self.preprocess_image(img_path, seg_path)
         # captions = self.img_id_to_captions[self.labels["image_ids"][i]]
         # randomly draw one of all available captions per image
         # caption = captions[np.random.randint(0, len(captions))]
