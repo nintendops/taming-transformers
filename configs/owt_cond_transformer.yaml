@@ -3,7 +3,8 @@ model:
   target: taming.models.cond_transformer.Net2NetTransformer
   params:
     # ckpt_path: /home/ICT2000/chenh/taming-transformers/logs/2022-08-06T05-29-58_usc_512_transformer_nc/checkpoints/last.ckpt
-    cond_stage_key: segmentation
+    first_stage_key: "segmentation"
+    # cond_stage_key: "segmentation"
     transformer_config:
       target: taming.modules.transformer.mingpt.GPT
       params:
@@ -18,7 +19,7 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQSegmentationModel
       params:
-        ckpt_path: /home/ICT2000/chenh/taming-transformers/logs/2022-08-01T01-35-19_usc_512_cond_stage/checkpoints/last.ckpt
+        ckpt_path: /home/ICT2000/chenh/taming-transformers/logs/2022-08-10T02-20-22_usc_512_pfvqgan_cond/checkpoints/last.ckpt
         embed_dim: 128
         n_embed: 1024
         image_key: "segmentation"

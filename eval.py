@@ -6,6 +6,7 @@ from omegaconf import OmegaConf
 import yaml
 import numpy as np
 import torch
+import torchvision
 import torch.nn.functional as F
 import time
 import cv2
@@ -15,7 +16,18 @@ from torch.utils.data import random_split, DataLoader, Dataset
 from taming.models.cond_transformer import Net2NetTransformer
 
 
-def write_images(path, image, n_row=1):
+def write_images(path, image):
+    image = ((image + 1) * 255 / 2).astype(np.uint8)
+    if image.ndim == 3:
+        if image.shape[2] == 3:
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        if image.shape[2] == 4:
+            image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
+    cv2.imwrite('{}'.format(str(path)), np.squeeze(image))
+
+def write_image_grid(path, image, n_rows=1):
+    image = torchvision.utils.make_grid(image, nrow=n_rows)
+    image = image.detach().cpu().numpy().transpose(1,2,0)
     image = ((image + 1) * 255 / 2).astype(np.uint8)
     if image.ndim == 3:
         if image.shape[2] == 3:
@@ -107,11 +119,11 @@ def eval_fixsample(batch, image_idx, model, config, n_sample=4, do_not_generate=
     # using random codebook entries
     z_indices = torch.randint(codebook_size, z_indices_shape, device=model.device)
 
-    # debug testing: replace random z indices with that of an encoded batch image
-    # x = tensify(batch['image'])
-    # c = x
-    # _, z_indices = model.encode_to_z(x)
-    # _, c_indices = model.encode_to_c(c)
+    # inpainting setting: replace random z indices with that of an encoded batch image
+    x = tensify(batch['image'])
+    c = x
+    _, z_indices = model.encode_to_z(x)
+    _, c_indices = model.encode_to_c(c)
 
     if not unconditional:
         cidx = c_indices
@@ -180,10 +192,11 @@ def eval_mult(batch,
               transformer_cond, 
               config, 
               config_cond, 
-              multiplier=4, 
+              multiplier:int=4, 
               cropped_ratio=0.0, 
               n_sample=4, 
-              split_generate = True,
+              inpainting=True,
+              split_generate = False,
               do_not_generate=False):
 
     # ---------------------- first log the input data -----------------------------
@@ -204,44 +217,75 @@ def eval_mult(batch,
     tensify = lambda x: torch.from_numpy(x[None]).permute(0,3,1,2).contiguous().float().to(device)
     tensor_to_numpy = lambda x:x.detach().cpu().numpy()[0].transpose(1,2,0)
     codebook_size = config.model.params.first_stage_config.params.embed_dim
-    codebook_size_cond = config_cond.model.params.first_stage_config.params.embed_dim
     nb = 1
     res = 256
     c_code_res = 16
 
-    if not unconditional:
-        seg_tensor = tensify(segmentation)
-        c_code, c_indices = model.encode_to_c(seg_tensor)
+    if inpainting:
+        # inpainting setting: replace random z indices with that of an encoded batch image
+        x = tensify(image)
+        _, z_indices = model.encode_to_z(x)
+    else:
+        z_indices = None
 
-    for i in range(n_sample):
-        print(f"Generating samples for batch data {image_idx} at sample #{i}")
+    # use conditinal inpaiting in all cases
+    c = tensify(segmentation)
+    _, c_indices = model.encode_to_c(c)
+
+    if not unconditional:
+        codebook_size_cond = config_cond.model.params.first_stage_config.params.embed_dim
+        # seg_tensor = tensify(segmentation)
+        # c_code, c_indices = transformer.encode_to_c(seg_tensor)
         # ---------------------- generate conditional code -----------------------------
-        if unconditional:
-            c_indices_large = None
-        else:
-            # (nb, nnx, nny)
-            c_indices_large = generate(transformer_cond, multiplier, codebook_size_cond, c_code_res, gt_z_indices=c_indices)
-        # ----------------------------------------------------------------------------------
+        # (nb, nnx, nny)
+        c_indices_large = generate(transformer_cond, multiplier, codebook_size_cond, c_code_res, gt_z_indices=c_indices)
+        # reconstruct the conditional shape
+        new_c_code_shape = [nb, codebook_size_cond, multiplier*c_code_res, multiplier*c_code_res]
+        seg_rec = transformer_cond.decode_to_img(c_indices_large, new_c_code_shape)
+        seg_rec = F.softmax(seg_rec,dim=1)
+        # seg_rec = seg_rec[0].detach().cpu().numpy().transpose(1,2,0)
+        # write_images(os.path.join(save_path, f'image_{image_idx}_seg_sample_{i_sample}_generate.png'), seg_rec)
+    else:
+        c_indices_large = None
+
+    for i_sample in range(n_sample):
+        print(f"Generating samples for batch data {image_idx} at sample #{i_sample}")
+
         # ---------------------- generate image code -----------------------------
-        z_indices_large = generate(transformer, multiplier, codebook_size, c_code_res, c_indices=c_indices_large)
+        z_indices_large = generate(transformer, 
+                                   multiplier, 
+                                   codebook_size, 
+                                   c_code_res, 
+                                   gt_z_indices=z_indices, 
+                                   c_indices=c_indices_large)
         # ------------------------------------------------------------------------
 
         # ---------------------- decode code blocks into image ----------------------------- 
         if split_generate:
-            z_code_shape = [nb, res, c_code_res, c_code_res]
+            z_code_shape = [nb, codebook_size, c_code_res, c_code_res]
             target_image = np.zeros([multiplier*res, multiplier*res, 3])
             _, nnx, nny = z_indices_large.shape
             for i in range(0, nnx, c_code_res):
                 for j in range(0, nny, c_code_res):
                     patch_code = z_indices_large[:, i:i+c_code_res, j:j+c_code_res]
-                    x_sample = model.decode_to_img(patch_code, z_code_shape)
+                    x_sample = transformer.decode_to_img(patch_code, z_code_shape)
+                    # x_sample = F.softmax(x_sample, dim=1)
                     patch_image = x_sample[0].detach().cpu().numpy().transpose(1,2,0)
                     target_image[i*c_code_res:i*c_code_res+res, j*c_code_res:j*c_code_res+res] = patch_image
+            x_sample = torch.from_numpy(target_image.transpose(2,0,1))
         else:
-            new_z_code_shape = [nb, res, multiplier*c_code_res, multiplier*c_code_res]
-            x_sample = model.decode_to_img(z_indices_large, new_z_code_shape)
-            target_image = x_sample[0].detach().cpu().numpy().transpose(1,2,0)
-        write_images(os.path.join(save_path, f'image_{image_idx}_sample_{i}_generate.png'), target_image)
+            new_z_code_shape = [nb, codebook_size, multiplier*c_code_res, multiplier*c_code_res]
+            x_sample = transformer.decode_to_img(z_indices_large, new_z_code_shape).detach().cpu()
+            # x_sample = F.softmax(x_sample, dim=1)
+            target_image = x_sample[0].numpy().transpose(1,2,0)
+
+        # create grid image
+        if unconditional:
+            write_images(os.path.join(save_path, f'image_{image_idx}_sample_{i_sample}_generate.png'), target_image)
+        else:
+            output_image = torch.cat([x_sample, seg_rec.detach().cpu()],dim=0)
+            write_image_grid(os.path.join(save_path, f'image_{image_idx}_sample_{i_sample}_generate.png'), output_image, n_rows=2)
+        # write_images(os.path.join(save_path, f'image_{image_idx}_sample_{i_sample}_generate.png'), target_image)
         # ---------------------------------------------------------------------------------
 
 def generate(model, multiplier, codebook_size, res, image_res=256, gt_z_indices=None, c_indices=None):
@@ -260,6 +304,8 @@ def generate(model, multiplier, codebook_size, res, image_res=256, gt_z_indices=
     nnx = res * multiplier
     nny = res * multiplier
     nb = 1
+    temperature = 1.0
+    top_k = 100
 
     # block size for each generation step (16x16) and step size of the sliding windows (8)
     c_code_res = 16
@@ -270,11 +316,11 @@ def generate(model, multiplier, codebook_size, res, image_res=256, gt_z_indices=
 
     # randomly initialized codebook to be inferred iteratively
     z_indices = torch.randint(codebook_size, [nb, nnx, nny], device=model.device)
-
-    # (optional) partially fill the z_indices with known data, which is useful for unconditional impainting
+    occupancy = np.zeros(z_indices.shape).astype(bool)
+    
+    # (inpainting) partially fill the z_indices with known data
     if gt_z_indices is not None:
         z_indices[:,:nx, :ny] = gt_z_indices.reshape(nb, nx, ny)
-        occupancy = np.zeros(z_indices.shape).astype(bool)
         occupancy[:,:nx, :ny] = True
 
     # getting the dummy conditional code for unconditional generation
@@ -319,7 +365,7 @@ def generate(model, multiplier, codebook_size, res, image_res=256, gt_z_indices=
 
 def load_config(config_path):
     config = OmegaConf.load(config_path)
-    config ['data']['params']['batch_size'] = 1
+    config ['data']['params']['batch_size'] = 4
     return config
 
 if __name__ == '__main__':
@@ -331,7 +377,8 @@ if __name__ == '__main__':
     # key configuration: config path
     ###################################################
     config_path = "configs/owt_transformer.yaml"
-    config_path_cond = "configs/owt_transformer.yaml"
+    # config_path = "configs/owt_cond_transformer.yaml"
+    config_path_cond = "configs/owt_cond_transformer.yaml"
     ###################################################
     
     # loading config
@@ -356,8 +403,9 @@ if __name__ == '__main__':
     
     # key configuration: ckpt path
     ###################################################
-    ckpt_path = "logs/2022-08-02T07-32-14_usc_512_transformer/checkpoints/last.ckpt"
-    ckpt_path_cond = "logs/2022-08-02T07-32-14_usc_512_transformer/checkpoints/last.ckpt"
+    # ckpt_path = "logs/2022-08-22T16-25-50_owt_cond_pf_transformer/checkpoints/last.ckpt"
+    ckpt_path = "logs/2022-08-18T17-17-56_usc_512_pf_transformer/checkpoints/last.ckpt"
+    ckpt_path_cond = "logs/2022-08-22T16-25-50_owt_cond_pf_transformer/checkpoints/last.ckpt"
     ###################################################
 
     # loading checkpoint
@@ -381,13 +429,15 @@ if __name__ == '__main__':
     print("Done!")
     dataset = data.datasets['train']
     dataset_iter = iter(data._train_dataloader())
-    data_select = [5,13,16,20,23,26,28] # range(len(dataset))
 
+    scale = 2
+    data_select = [5,13,16,20,23,26,28] # range(len(dataset))
+    # data_select = [2,3,4,7,8,9,11,13,14,21,25,29,31]
     with torch.no_grad():
         for i in data_select:
             batch_data = dataset[i]
             if unconditional:
-                eval_mult(batch_data, i, model, None, config, None)
+                eval_mult(batch_data, i, model, None, config, None, multiplier=scale)
             else:
-                eval_mult(batch_data, i, model, model_cond, config, config_cond)
+                eval_mult(batch_data, i, model, model_cond, config, config_cond, multiplier=scale)
 

@@ -18,40 +18,28 @@ class OWTBase(Dataset):
             self.crop_size = size
         else:
             self.crop_size = crop_size
-
         self.onehot = onehot_segmentation       # return segmentation as rgb or one hot
+        self.dataroot = dataroot
+        self.initialize_paths()
+        self.initialize_processor(force_no_crop)
 
+    def __len__(self):
+        return len(self.labels["image_ids"])
+
+    def initialize_paths(self):
         # file paths without extensions
-        ids = [f[:-4].split('/')[-1] for f in glob.glob(os.path.join(dataroot, "*.JPG"))] # self.json_data["images"]     
+        ids = [f[:-4].split('/')[-1] for f in glob.glob(os.path.join(self.dataroot, "*.JPG"))] # self.json_data["images"]     
         ids = ids*20
 
         self.labels = {"image_ids": ids}
         # self.img_id_to_captions = dict()
         self.img_id_to_filepath = dict()
         self.img_id_to_segmentation_filepath = dict()
-
         for iid in tqdm(ids, desc='ImgToPath'):
-            self.img_id_to_filepath[iid] =  os.path.join(dataroot, iid+'.JPG')
-            self.img_id_to_segmentation_filepath[iid] =  os.path.join(dataroot, iid+'.npy')
+            self.img_id_to_filepath[iid] =  os.path.join(self.dataroot, iid+'.JPG')
+            self.img_id_to_segmentation_filepath[iid] =  os.path.join(self.dataroot, iid+'.npy')
 
-        # for imgdir in tqdm(imagedirs, desc="ImgToPath"):
-        #     self.img_id_to_filepath[imgdir["id"]] = os.path.join(dataroot, imgdir["file_name"])
-        #     self.img_id_to_captions[imgdir["id"]] = list()
-           
-        #     self.img_id_to_segmentation_filepath[imgdir["id"]] = os.path.join(
-        #         self.segmentation_prefix, pngfilename)
-          
-        #     if given_files is not None:
-        #         if pngfilename in given_files:
-        #             self.labels["image_ids"].append(imgdir["id"])
-        #     else:
-        #         self.labels["image_ids"].append(imgdir["id"])
-
-        # capdirs = self.json_data["annotations"]
-        # for capdir in tqdm(capdirs, desc="ImgToCaptions"):
-        #     # there are in average 5 captions per image
-        #     self.img_id_to_captions[capdir["image_id"]].append(np.array([capdir["caption"]]))
-
+    def initialize_processor(self, force_no_crop=False):
         self.rescaler = albumentations.SmallestMaxSize(max_size=self.size)
         if self.split=="validation":
             self.cropper = albumentations.CenterCrop(height=self.crop_size, width=self.crop_size)
@@ -65,9 +53,6 @@ class OWTBase(Dataset):
             self.preprocessor = albumentations.Compose(
                 [self.rescaler],
                 additional_targets={"segmentation": "image"})
-
-    def __len__(self):
-        return len(self.labels["image_ids"])
 
     def preprocess_image(self, image_path, segmentation_path):
         image = Image.open(image_path)
@@ -84,17 +69,6 @@ class OWTBase(Dataset):
         segmentation = segmentation * (segmentation>-1)
         segmentation = segmentation.astype(np.uint8)
 
-        # if self.onehot:
-        #     assert self.stuffthing
-        #     # stored in caffe format: unlabeled==255. stuff and thing from
-        #     # 0-181. to be compatible with the labels in
-        #     # https://github.com/nightrome/cocostuff/blob/master/labels.txt
-        #     # we shift stuffthing one to the right and put unlabeled in zero
-        #     # as long as segmentation is uint8 shifting to right handles the
-        #     # latter too
-        #     assert segmentation.dtype == np.uint8
-        #     segmentation = segmentation + 1
-
         processed = self.preprocessor(image=image, segmentation=segmentation)
         image, segmentation = processed["image"], processed["segmentation"]
         image = (image / 127.5 - 1.0).astype(np.float32)
@@ -107,7 +81,7 @@ class OWTBase(Dataset):
             onehot = np.zeros((flatseg.size, n_labels), dtype=np.bool)
             onehot[np.arange(flatseg.size), flatseg] = True
             onehot = onehot.reshape(segmentation.shape + (n_labels,)).astype(int)
-            segmentation = onehot
+            segmentation = onehot.astype(np.float32)
         else:
             # normalizing to (-1, 1)?
             segmentation = (segmentation / 1.0 - 1.0).astype(np.float32)
@@ -145,6 +119,37 @@ class OWTBase(Dataset):
                    "filename_": img_path.split(os.sep)[-1]
                     }
         return example
+
+def parse_txtfile(txt_path):
+    with open(txt_path, 'r') as f:
+        lines = f.readlines()
+    lines = [l.strip() for l in lines]
+    paths =[p.split(',')[0] for p in lines]
+    names = [p.split(',')[1] for p in lines]
+    return paths, names
+
+class OWTMulti(OWTBase):
+    def initialize_paths(self):
+        # requires self.dataroot to be a txt file that stores all the sub-dataset paths
+        all_ids = dict()
+        paths, names = parse_txtfile(self.dataroot)
+        for p,n in zip(paths,names): 
+            all_ids[n] = [f[:-4].split('/')[-1] for f in glob.glob(os.path.join(p, "*.JPG"))] 
+
+        # self.img_id_to_captions = dict()
+        self.img_id_to_filepath = dict()
+        self.img_id_to_segmentation_filepath = dict()
+
+        for p,n in zip(paths,names):
+            for iid in tqdm(all_ids[n], desc=f'ImgToPath_{n}'):
+                set_id = f"{n}_{iid}"
+                self.img_id_to_filepath[set_id] =  os.path.join(p, iid+'.JPG')
+                self.img_id_to_segmentation_filepath[set_id] =  os.path.join(p, iid+'.npy')
+
+        ids = [k for k in self.img_id_to_filepath.keys()]
+        ids = ids * 20
+
+        self.labels = {"image_ids": ids }
 
 
 class OWTToken(OWTBase):

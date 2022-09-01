@@ -8,7 +8,7 @@ model:
       params:
         vocab_size: 8192
         block_size: 512  # = 256 + 256 = dim(vqgan_latent_space,16x16) 
-        n_layer: 24
+        n_layer: 40 # 24,40
         n_head: 16
         n_embd: 1408
         embd_pdrop: 0.1
@@ -17,10 +17,11 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/2022-08-12T07-21-07_usc_512_pfvqgan/checkpoints/last.ckpt
+        ckpt_path: logs/2022-08-29T21-25-31_owt_vqgan_usc_272/checkpoints/last.ckpt
         embed_dim: 256
         n_embed: 8192
         ddconfig:
+          padding_free: true
           double_z: false
           z_channels: 256
           resolution: 256
@@ -43,11 +44,11 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 4
+    batch_size: 2
     train:
       target: taming.data.owt.OWTBase
       params:
-        size: 512
+        size: 272
         # dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
         dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
         # dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"

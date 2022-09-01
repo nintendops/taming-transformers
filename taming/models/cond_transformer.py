@@ -39,7 +39,7 @@ class Net2NetTransformer(pl.LightningModule):
             permuter_config = {"target": "taming.modules.transformer.permuter.Identity"}
         self.permuter = instantiate_from_config(config=permuter_config)
         self.transformer = instantiate_from_config(config=transformer_config)
-
+        self.use_condGPT = self.transformer.__class__.__name__ == 'CondGPT'
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
         self.downsample_cond_size = downsample_cond_size
@@ -91,7 +91,7 @@ class Net2NetTransformer(pl.LightningModule):
         else:
             a_indices = z_indices
 
-        if self.cond_stage_key == 'segmentation':
+        if self.use_condGPT:
             logits, _ = self.transformer(a_indices[:,:-1], c_indices)
         else:
             cz_indices = torch.cat((c_indices, a_indices), dim=1)
@@ -115,7 +115,7 @@ class Net2NetTransformer(pl.LightningModule):
     @torch.no_grad()
     def sample(self, x, c, steps, temperature=1.0, sample=False, top_k=None,
                callback=lambda k: None):
-        if self.cond_stage_key != 'segmentation':
+        if not self.use_condGPT:
             x = torch.cat((c,x),dim=1)
         block_size = self.transformer.get_block_size()
         assert not self.transformer.training
@@ -124,7 +124,7 @@ class Net2NetTransformer(pl.LightningModule):
             assert len(x.shape)==2
             noise_shape = (x.shape[0], steps-1)
             #noise = torch.randint(self.transformer.config.vocab_size, noise_shape).to(x)
-            if self.cond_stage_key == 'segmentation':
+            if self.use_condGPT:
                 noise = c.clone()[:,:-1]
                 x = torch.cat((x,noise),dim=1)
                 logits, _ = self.transformer(x, c)
@@ -150,14 +150,14 @@ class Net2NetTransformer(pl.LightningModule):
             else:
                 _, ix = torch.topk(probs, k=1, dim=-1)
             # cut off conditioning
-            if self.cond_stage_key != 'segmentation':
+            if not self.use_condGPT:
                 x = ix[:, c.shape[1]-1:]
         else:
             for k in range(steps):
                 callback(k)
                 assert x.size(1) <= block_size # make sure model can see conditioning
                 x_cond = x if x.size(1) <= block_size else x[:, -block_size:]  # crop context if needed
-                if self.cond_stage_key == 'segmentation':
+                if self.use_condGPT:
                     logits, _ = self.transformer(x_cond, c)
                 else:
                     logits, _ = self.transformer(x_cond)
@@ -176,7 +176,7 @@ class Net2NetTransformer(pl.LightningModule):
                 # append to the sequence and continue
                 x = torch.cat((x, ix), dim=1)
             # cut off conditioning
-            if self.cond_stage_key != 'segmentation':
+            if not self.use_condGPT:
                 x = x[:, c.shape[1]:]
         return x
 
@@ -192,17 +192,19 @@ class Net2NetTransformer(pl.LightningModule):
         if self.downsample_cond_size > -1:
             c = F.interpolate(c, size=(self.downsample_cond_size, self.downsample_cond_size))
         quant_c, _, [_,_,indices] = self.cond_stage_model.encode(c)
-        if self.cond_stage_key == 'segmentation' or len(indices.shape) > 2:
+        if self.use_condGPT or len(indices.shape) > 2:
             indices = indices.view(c.shape[0], -1)           
         return quant_c, indices
 
     @torch.no_grad()
-    def decode_to_img(self, index, zshape):
+    def decode_to_img(self, index, zshape, use_softmax=False):
         index = self.permuter(index, reverse=True)
         bhwc = (zshape[0],zshape[2],zshape[3],zshape[1])
         quant_z = self.first_stage_model.quantize.get_codebook_entry(
             index.reshape(-1), shape=bhwc)
         x = self.first_stage_model.decode(quant_z)
+        if use_softmax or self.first_stage_key != 'image':
+            x = F.softmax(x, dim=1)
         return x
 
     @torch.no_grad()
@@ -214,7 +216,8 @@ class Net2NetTransformer(pl.LightningModule):
             x, c = self.get_xc(batch, N, diffuse=False, upsample_factor=8)
         else:
             x, c = self.get_xc(batch, N)
-        x = x.to(device=self.device)
+
+        x = x.to(device=self.device).float()
         c = c.to(device=self.device).float()
 
         quant_z, z_indices = self.encode_to_z(x)
@@ -255,7 +258,9 @@ class Net2NetTransformer(pl.LightningModule):
         log["inputs"] = x
         log["reconstructions"] = x_rec
 
-        if self.cond_stage_key in ["objects_bbox", "objects_center_points"]:
+        if self.be_unconditional:
+            pass
+        elif self.cond_stage_key in ["objects_bbox", "objects_center_points"]:
             figure_size = (x_rec.shape[2], x_rec.shape[3])
             dataset = kwargs["pl_module"].trainer.datamodule.datasets["validation"]
             label_for_category_no = dataset.get_textual_label_for_category_no
