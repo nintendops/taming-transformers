@@ -17,11 +17,11 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/2022-08-29T21-25-31_owt_vqgan_usc_272/checkpoints/last.ckpt
+        ckpt_path: logs/2022-09-01T18-39-08_usc_272_zp_vqgan/checkpoints/last.ckpt
         embed_dim: 256
         n_embed: 8192
         ddconfig:
-          padding_free: true
+          padding_free: false
           double_z: false
           z_channels: 256
           resolution: 256

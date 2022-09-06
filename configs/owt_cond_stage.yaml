@@ -7,6 +7,7 @@ model:
     image_key: "segmentation"
     n_labels: 3
     ddconfig:
+      padding_free: false
       double_z: false
       z_channels: 256
       resolution: 256
@@ -35,7 +36,7 @@ data:
     train:
       target: taming.data.owt.OWTBase
       params:
-        size: 512
+        size: 272
         # dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
         dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
         crop_size: 256

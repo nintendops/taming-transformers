@@ -10,10 +10,12 @@ from PIL import Image
 
 
 class OWTBase(Dataset):
-    def __init__(self, size=None, dataroot="", onehot_segmentation=False, 
-                 crop_size=None, force_no_crop=False, given_files=None, multiscale_factor=1.0, split='train'):
+    def __init__(self, size=None, dataroot="", multiplier=20, onehot_segmentation=False, 
+                 crop_size=None, force_no_crop=False, given_files=None, multiscale_factor=1.0, extension='JPG', split='train'):
+        self.ext = extension
         self.split = split # self.get_split()
         self.size = size
+        self.multiplier = multiplier
         self.ms_factor = multiscale_factor
         if crop_size is None:
             self.crop_size = size
@@ -29,25 +31,30 @@ class OWTBase(Dataset):
 
     def initialize_paths(self):
         # file paths without extensions
-        ids = [f[:-4].split('/')[-1] for f in glob.glob(os.path.join(self.dataroot, "*.JPG"))] # self.json_data["images"]     
-        ids = ids*20
+        ids = [f[:-4].split('/')[-1] for f in glob.glob(os.path.join(self.dataroot, f"*.{self.ext}"))] # self.json_data["images"]     
+        ids = ids*self.multiplier
 
         self.labels = {"image_ids": ids}
         # self.img_id_to_captions = dict()
         self.img_id_to_filepath = dict()
         self.img_id_to_segmentation_filepath = dict()
         for iid in tqdm(ids, desc='ImgToPath'):
-            self.img_id_to_filepath[iid] =  os.path.join(self.dataroot, iid+'.JPG')
+            self.img_id_to_filepath[iid] =  os.path.join(self.dataroot, iid+f'.{self.ext}')
             self.img_id_to_segmentation_filepath[iid] =  os.path.join(self.dataroot, iid+'.npy')
 
     def initialize_processor(self, force_no_crop=False):
         self.rescaler = albumentations.SmallestMaxSize(max_size=self.size)
         if self.split=="validation":
             self.cropper = albumentations.CenterCrop(height=self.crop_size, width=self.crop_size)
+            self.hflipper = albumentations.HorizontalFlip(p=0.0)
         else:
             self.cropper = albumentations.RandomCrop(height=self.crop_size, width=self.crop_size)
+            self.hflipper = albumentations.HorizontalFlip(p=0.5)
+
+        # self.vflipper = albumentations.VerticalFlip(p=0.5)
+
         self.preprocessor = albumentations.Compose(
-            [self.rescaler, self.cropper],
+            [self.rescaler, self.cropper, self.hflipper],
             additional_targets={"segmentation": "image"})
         if force_no_crop:
             self.rescaler = albumentations.Resize(height=self.size, width=self.size)
@@ -55,8 +62,8 @@ class OWTBase(Dataset):
                 [self.rescaler],
                 additional_targets={"segmentation": "image"})
 
-        if self.multiscale_factor < 1.0:
-            self.rescaler_2 = albumentations.Resize(height=int(self.multiscale_factor*self.size), width=int(self.multiscale_factor*self.size))
+        if self.ms_factor < 1.0:
+            self.rescaler_2 = albumentations.Resize(height=int(self.ms_factor*self.size), width=int(self.ms_factor*self.size))
 
     def preprocess_image(self, image_path, segmentation_path):
         image = Image.open(image_path)
@@ -76,12 +83,12 @@ class OWTBase(Dataset):
         processed = self.preprocessor(image=image, segmentation=segmentation)
         image, segmentation = processed["image"], processed["segmentation"]
 
-        if self.multiscale_factor < 1.0:
-            image_rescaled = self.rescaler_2(image)
+        if self.ms_factor < 1.0:
+            image_rescaled = self.rescaler_2(image=image)['image']
 
         image = (image / 127.5 - 1.0).astype(np.float32)
 
-        if self.multiscale_factor < 1.0:
+        if self.ms_factor < 1.0:
             image_rescaled = (image_rescaled / 127.5 - 1.0).astype(np.float32)
         else:
             image_rescaled = image
@@ -161,7 +168,7 @@ class OWTMulti(OWTBase):
                 self.img_id_to_segmentation_filepath[set_id] =  os.path.join(p, iid+'.npy')
 
         ids = [k for k in self.img_id_to_filepath.keys()]
-        ids = ids * 20
+        ids = ids * self.multiplier
 
         self.labels = {"image_ids": ids }
 

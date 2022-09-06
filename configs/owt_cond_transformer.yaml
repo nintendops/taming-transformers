@@ -25,6 +25,7 @@ model:
         image_key: "segmentation"
         n_labels: 3
         ddconfig:
+          padding_free: false
           double_z: false
           z_channels: 256
           resolution: 256
@@ -56,5 +57,5 @@ data:
         dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
         # dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
         crop_size: 256
-        multiscale_factor: 0.5
+        # multiscale_factor: 0.5
 

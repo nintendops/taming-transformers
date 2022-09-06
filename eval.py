@@ -376,7 +376,7 @@ if __name__ == '__main__':
 
     # key configuration: config path
     ###################################################
-    config_path = "configs/owt_transformer.yaml"
+    config_path = "configs/owt_nc_transformer.yaml"
     # config_path = "configs/owt_cond_transformer.yaml"
     config_path_cond = "configs/owt_cond_transformer.yaml"
     ###################################################
@@ -404,8 +404,8 @@ if __name__ == '__main__':
     # key configuration: ckpt path
     ###################################################
     # ckpt_path = "logs/2022-08-22T16-25-50_owt_cond_pf_transformer/checkpoints/last.ckpt"
-    ckpt_path = "logs/2022-08-18T17-17-56_usc_512_pf_transformer/checkpoints/last.ckpt"
-    ckpt_path_cond = "logs/2022-08-22T16-25-50_owt_cond_pf_transformer/checkpoints/last.ckpt"
+    ckpt_path = "logs/2022-09-02T11-13-23_usc_272_zp_transformer/checkpoints/last.ckpt"
+    # ckpt_path_cond = "logs/2022-08-22T16-25-50_owt_cond_pf_transformer/checkpoints/last.ckpt"
     ###################################################
 
     # loading checkpoint
@@ -431,7 +431,7 @@ if __name__ == '__main__':
     dataset_iter = iter(data._train_dataloader())
 
     scale = 2
-    data_select = [5,13,16,20,23,26,28] # range(len(dataset))
+    data_select = [5,13,16,20,23,26,7,8,9,10,11,12] # range(len(dataset))
     # data_select = [2,3,4,7,8,9,11,13,14,21,25,29,31]
     with torch.no_grad():
         for i in data_select:
