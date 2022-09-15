@@ -23,6 +23,8 @@ class OWTBase(Dataset):
             self.crop_size = crop_size
         self.onehot = onehot_segmentation       # return segmentation as rgb or one hot
         self.dataroot = dataroot
+        self.ignore_segmentation = False
+
         self.initialize_paths()
         self.initialize_processor(force_no_crop)
 
@@ -75,10 +77,13 @@ class OWTBase(Dataset):
         # if not self.onehot and not segmentation.mode == "RGB":
         #     segmentation = segmentation.convert("RGB")
 
-        segmentation = np.load(segmentation_path)
-        # remove -1 labels
-        segmentation = segmentation * (segmentation>-1)
-        segmentation = segmentation.astype(np.uint8)
+        if self.ignore_segmentation:
+            segmentation = image
+        else:
+            segmentation = np.load(segmentation_path)
+            # remove -1 labels
+            segmentation = segmentation * (segmentation>-1)
+            segmentation = segmentation.astype(np.uint8)
 
         processed = self.preprocessor(image=image, segmentation=segmentation)
         image, segmentation = processed["image"], processed["segmentation"]
@@ -141,6 +146,21 @@ class OWTBase(Dataset):
                     }
         return example
 
+class AnyImageFolder(OWTBase):
+    def initialize_paths(self):
+        # requires self.dataroot to be a txt file that stores all the sub-dataset paths
+        all_ids = dict()
+        ids = [f[:-4].split('/')[-1] for f in glob.glob(os.path.join(dataroot, f"*.{self.ext}"))] # self.json_data["images"]     
+        # self.img_id_to_captions = dict()
+        self.img_id_to_filepath = dict()
+        self.img_id_to_segmentation_filepath = dict()
+        for iid in tqdm(ids, desc='ImgToPath'):
+            self.img_id_to_filepath[iid] =  os.path.join(dataroot, dataset_name, f'{iid}.{self.ext}')
+        # no segmentation path
+        self.img_id_to_segmentation_filepath = self.img_id_to_filepath
+        self.labels = {"image_ids": ids }
+        self.ignore_segmentation = True
+
 def parse_txtfile(txt_path):
     with open(txt_path, 'r') as f:
         lines = f.readlines()
@@ -155,7 +175,7 @@ class OWTMulti(OWTBase):
         all_ids = dict()
         paths, names = parse_txtfile(self.dataroot)
         for p,n in zip(paths,names): 
-            all_ids[n] = [f[:-4].split('/')[-1] for f in glob.glob(os.path.join(p, "*.JPG"))] 
+            all_ids[n] = [f[:-4].split('/')[-1] for f in glob.glob(os.path.join(p, f"*.{self.ext}"))] 
 
         # self.img_id_to_captions = dict()
         self.img_id_to_filepath = dict()
@@ -164,13 +184,14 @@ class OWTMulti(OWTBase):
         for p,n in zip(paths,names):
             for iid in tqdm(all_ids[n], desc=f'ImgToPath_{n}'):
                 set_id = f"{n}_{iid}"
-                self.img_id_to_filepath[set_id] =  os.path.join(p, iid+'.JPG')
+                self.img_id_to_filepath[set_id] =  os.path.join(p, iid+f'.{self.ext}')
                 self.img_id_to_segmentation_filepath[set_id] =  os.path.join(p, iid+'.npy')
 
         ids = [k for k in self.img_id_to_filepath.keys()]
         ids = ids * self.multiplier
 
         self.labels = {"image_ids": ids }
+
 
 
 class OWTToken(OWTBase):

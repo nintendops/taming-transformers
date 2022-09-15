@@ -1,0 +1,54 @@
+model:
+  base_learning_rate: 4.5e-06
+  target: taming.models.cond_transformer.Net2NetTransformer
+  params:
+    cond_stage_key: segmentation
+    transformer_config:
+      target: taming.modules.transformer.mingpt.GPT
+      params:
+        vocab_size: 8192
+        block_size: 512  # = 256 + 256 = dim(vqgan_latent_space,16x16) 
+        n_layer: 40 # 24,40
+        n_head: 16
+        n_embd: 1408
+        embd_pdrop: 0.1
+        resid_pdrop: 0.1
+        attn_pdrop: 0.1
+    first_stage_config:
+      target: taming.models.vqgan.VQModel
+      params:
+        ckpt_path: logs/2022-09-01T18-39-08_usc_272_zp_vqgan/checkpoints/last.ckpt
+        embed_dim: 256
+        n_embed: 8192
+        ddconfig:
+          padding_free: false
+          double_z: false
+          z_channels: 256
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 1
+          - 2
+          - 2
+          - 4
+          num_res_blocks: 2
+          attn_resolutions:
+          - 16
+          dropout: 0.0
+        lossconfig:
+          target: taming.modules.losses.DummyLoss
+    cond_stage_config: "__is_unconditional__"
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 8
+    train:
+      target: taming.data.owt.AnyImageFolder
+      params:
+        size: 256
+        dataroot: "/data/Haiwei/clevr/clevr/256"
+        crop_size: 256
+        extension: 'png'
