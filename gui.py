@@ -35,7 +35,7 @@ def load_image(values, window):
         shutil.copy(image_file, tmp_file)
         image = Image.open(tmp_file)
         image_original = image.copy()
-        image.thumbnail((512, 512))
+        image.thumbnail((768, 512))
         image.save(tmp_file)
         width, height = image.size
         bio = io.BytesIO()
@@ -52,7 +52,7 @@ def load_image(values, window):
         seg = np.load(seg_file)
         seg = seg * (seg>-1)
         seg_image = Seg_to_Image(seg)
-        seg_image.thumbnail((512, 512))        
+        seg_image.thumbnail((768, 512))        
         seg_bio = io.BytesIO()
         seg_image.save(seg_bio, format="PNG")
         width, height = seg_image.size
@@ -64,12 +64,21 @@ def load_image(values, window):
 
     return image_original, seg, bio
 
+
+def draw_at(window, location, image):
+    graph = window["-GRAPH-"]  
+    image = Image.fromarray(np.uint8(image))
+    bio = io.BytesIO()
+    image.save(bio, format="PNG")
+    graph.draw_image(data=bio.getvalue(), location=location)
+    graph.update()
+
 def reload_image(window, image, seg):
     graph = window["-GRAPH-"]  
     seg_graph = window["-LABEL-"]
     image = Image.fromarray(np.uint8(image))
     image_original = image.copy()
-    image.thumbnail((512, 512))
+    image.thumbnail((768, 512))
     width, height = image.size
     bio = io.BytesIO()
     image.save(bio, format="PNG")
@@ -77,7 +86,7 @@ def reload_image(window, image, seg):
     graph.set_size((width, height))
     graph.update()
     seg_image = Seg_to_Image(seg)
-    seg_image.thumbnail((512, 512))        
+    seg_image.thumbnail((768, 512))        
     seg_bio = io.BytesIO()
     seg_image.save(seg_bio, format="PNG")
     width, height = seg_image.size
@@ -221,6 +230,11 @@ def main():
             ),
         ],
         [
+            sg.Radio("Inpainting Mode", 'group',default=True, k='INPAINTING'),
+            sg.Radio("Expansion Mode", 'group', k='EXPANSION'),
+        ],
+
+        [
             sg.Graph(
                 canvas_size=(400, 400),
                 graph_bottom_left=(0, 0),
@@ -246,12 +260,16 @@ def main():
         [sg.Button(process_events), sg.Button(network_events)],
     ]
 
-    window = sg.Window("Drawing GUI", layout, size=(1200, 600))
+    window = sg.Window("Drawing GUI", layout, size=(1800, 1000))
 
     graph = window["-GRAPH-"]  
     dragging = False
     start_point = end_point = prior_rect = selected_start = selected_end = None
-    current_mask = current_model = current_config = None
+
+    current_mask = None
+    bio = None
+    current_model, current_config = util.initialize()
+
     events = [
         # "Load Image",
         "-BEGIN_X-",
@@ -268,6 +286,8 @@ def main():
         if event == "Exit" or event == sg.WIN_CLOSED:
             break
 
+        EXPANSION_MODE = values['EXPANSION']
+
         # load
         if event in [load_events, clear_events]:
             image, seg, bio = load_image(values, window)
@@ -279,8 +299,9 @@ def main():
             else:
                 sx, sy = selected_start
                 ex, ey = selected_end
+                coords = [x / 800 for x in [sx,sy,ex,ey]]
                 new_img, new_seg, current_mask = util.process_image(
-                    [x / 800 for x in [sx,sy,ex,ey]], 
+                    coords, 
                     image,
                     seg,
                     label_int_map[values["-FILL_COLOR-"]], 
@@ -293,13 +314,22 @@ def main():
             if current_mask is None:
                 window["-INFO-"].update(value=f"Please first use the {process_events} function!")
             else:
-                data = [new_img, new_seg, current_mask]
-                current_model, current_config, output = util.run(current_model, current_config, data)
+                # small trick: modify coords so the inference machine sees more region
+                sx = max(0, min(sx, ex) - 32)
+                ex = max(sx, ex)
+                sy = min(800, max(sy, ey) + 32)
+                ey = min(sy, ey)
+                coords = [x / 800 for x in [sx,sy,ex,ey]]                   
+                
+                data = [coords, new_img, new_seg, current_mask]
+                current_model, current_config, output, new_loc = util.run(current_model, current_config, data)
+                draw_at(window, new_loc, output)
+                # draw_at(window, selected_start, output)
         # click
         if event == click_events:
             x, y = values["-GRAPH-"]
             label_color = label_color_map[values["-FILL_COLOR-"]]
-            if not dragging:
+            if bio is not None and not dragging:
                 start_point = (x, y)
                 refresh_graph(graph, bio)
                 dragging = True
@@ -321,8 +351,6 @@ def main():
             window["-INFO-"].update(value=f"Right clicked location {values['-GRAPH-']}")
         elif event.endswith('+MOTION+'):  # Righ click
             window["-INFO-"].update(value=f"mouse freely moving {values['-GRAPH-']}")
-
-
 
         # if event in events:
         #     apply_drawing(values, window)
