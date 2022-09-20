@@ -376,7 +376,7 @@ if __name__ == '__main__':
 
     # key configuration: config path
     ###################################################
-    config_path = "configs/owt_nc_transformer.yaml"
+    config_path = "logs/2022-09-12T23-47-00_clevr_nc_transformer/configs/2022-09-12T23-47-00-project.yaml"
     # config_path = "configs/owt_cond_transformer.yaml"
     config_path_cond = "configs/owt_cond_transformer.yaml"
     ###################################################
@@ -404,7 +404,7 @@ if __name__ == '__main__':
     # key configuration: ckpt path
     ###################################################
     # ckpt_path = "logs/2022-08-22T16-25-50_owt_cond_pf_transformer/checkpoints/last.ckpt"
-    ckpt_path = "logs/2022-09-02T11-13-23_usc_272_zp_transformer/checkpoints/last.ckpt"
+    ckpt_path = "logs/2022-09-12T23-47-00_clevr_nc_transformer/checkpoints/last.ckpt"
     # ckpt_path_cond = "logs/2022-08-22T16-25-50_owt_cond_pf_transformer/checkpoints/last.ckpt"
     ###################################################
 
@@ -430,7 +430,7 @@ if __name__ == '__main__':
     dataset = data.datasets['train']
     dataset_iter = iter(data._train_dataloader())
 
-    scale = 2
+    scale = 4
     data_select = [5,13,16,20,23,26,7,8,9,10,11,12] # range(len(dataset))
     # data_select = [2,3,4,7,8,9,11,13,14,21,25,29,31]
     with torch.no_grad():

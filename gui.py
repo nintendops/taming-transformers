@@ -70,7 +70,10 @@ def draw_at(window, location, image):
     image = Image.fromarray(np.uint8(image))
     bio = io.BytesIO()
     image.save(bio, format="PNG")
-    graph.draw_image(data=bio.getvalue(), location=location)
+    if location is None:
+        graph.draw_image(data=bio.getvalue(), location=(0, 800))
+    else:
+        graph.draw_image(data=bio.getvalue(), location=location)
     graph.update()
 
 def reload_image(window, image, seg):
@@ -291,6 +294,7 @@ def main():
         # load
         if event in [load_events, clear_events]:
             image, seg, bio = load_image(values, window)
+            original_image = image
 
         # process
         if event in process_events:
@@ -306,23 +310,30 @@ def main():
                     seg,
                     label_int_map[values["-FILL_COLOR-"]], 
                     label_int_map[values["-OUTLINE_COLOR-"]],
+                    expansion = EXPANSION_MODE
                 )
                 image, seg, bio = reload_image(window, new_img, new_seg)
 
         # infer
         if event in network_events:
-            if current_mask is None:
+            if current_mask is None and not EXPANSION_MODE:
                 window["-INFO-"].update(value=f"Please first use the {process_events} function!")
             else:
-                # small trick: modify coords so the inference machine sees more region
-                sx = max(0, min(sx, ex) - 32)
-                ex = max(sx, ex)
-                sy = min(800, max(sy, ey) + 32)
-                ey = min(sy, ey)
-                coords = [x / 800 for x in [sx,sy,ex,ey]]                   
-                
-                data = [coords, new_img, new_seg, current_mask]
-                current_model, current_config, output, new_loc = util.run(current_model, current_config, data)
+                if EXPANSION_MODE:
+                    data = [new_img, new_seg]
+                else:
+                    # small trick: modify coords so the inference machine sees more region
+                    # sx = max(0, min(sx, ex) - 32)
+                    # ex = max(sx, ex)
+                    # sy = min(800, max(sy, ey) + 32)
+                    # ey = min(sy, ey)
+                    # coords = [x / 800 for x in [sx,sy,ex,ey]]                 
+                    data = [coords, new_img, new_seg, current_mask]
+                current_model, current_config, output, new_loc = util.run(current_model, 
+                                                                          current_config, 
+                                                                          data,
+                                                                          window=window, 
+                                                                          expansion=EXPANSION_MODE)
                 draw_at(window, new_loc, output)
                 # draw_at(window, selected_start, output)
         # click
