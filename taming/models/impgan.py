@@ -50,7 +50,7 @@ def get_distribution_type(shape, type='uniform'):
 
 def get_cropped_coord_grid(device, 
                            dist_shift, 
-                           nb=1,  
+                           nb,  
                            res=256, 
                            crop_res=128, 
                            scale=2.0):
@@ -64,11 +64,11 @@ def get_cropped_coord_grid(device,
         dx,dy = s
         dx = int(dx.item())
         dy = int(dy.item())
-        coord_grid_sample[idx] = coord_grid[:,:,dx:dx+crop_res, dy:dy+crop_res]
+        coord_grid_sample[idx] = coord_grid[idx, :, dx:dx+crop_res, dy:dy+crop_res]
     return coord_grid_sample, shift
 
-def crop_input(device, x, shift, crop_res=128):
-    new_x = torch.zeros([nb,3,crop_res,crop_res]).to(device)
+def crop_input(device, x, shift, nb, crop_res=128):
+    new_x = torch.zeros([nb, 3, crop_res, crop_res]).to(device)
     for idx, s in enumerate(shift):
         dx, dy = s
         dx = int(dx.item())
@@ -95,7 +95,7 @@ def stationary_noise(positions, feature, scale=2.0, sigma=0.2, mode='gaussian'):
     '''
     # cgs_q: coordinate_grid_sampled_quantized (according to codebook resolution)
     c_res = feature.shape[2]
-    cgs_q = (cgs + scale) * c_res / (2 * scale)
+    cgs_q = (positions + scale) * c_res / (2 * scale)
     
     # index-select from features    
     idx_1 = torch.clamp(torch.floor(cgs_q).long(), 0, c_res - 1)
@@ -169,6 +169,7 @@ class ImplicitDecoder(pl.LightningModule):
         self.dist_shift = get_distribution_type([1,2], type='uniform')
         self.mlp = mlpDecoder(**mlp_config)
         self.loss = instantiate_from_config(lossconfig)
+        self.image_key = image_key
 
         self.init_first_stage_from_ckpt(first_stage_config)
         if ckpt_path is not None:
@@ -209,20 +210,20 @@ class ImplicitDecoder(pl.LightningModule):
                                             x.shape[2], 
                                             self.crop_res, 
                                             self.shift_scale)
-        cropped_x = crop_input(quant.device, x, shift, crop_res=self.crop_res)
+        cropped_x = crop_input(quant.device, x, shift, quant.shape[0], crop_res=self.crop_res)
         # feature sampling
         feat = stationary_noise(cgs, quant)  
         fourier = positional_encoding(cgs)
         feat = torch.cat([fourier, feat], 1)
         # decoding
         dec = self.decode(feat)
-        return dec
+        return dec, cropped_x
 
     def log_images(self, batch, **kwargs):
         log = dict()
         x = self.get_input(batch, self.image_key)
         x = x.to(self.device)
-        xrec = self(x)
+        xrec, x = self(x)
         if x.shape[1] > 3:
             # colorize with random projection
             assert xrec.shape[1] > 3
@@ -237,7 +238,7 @@ class ImplicitDecoder(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         x = self.get_input(batch, self.image_key)
-        xrec = self(x)
+        xrec, x = self(x)
         qloss = torch.tensor([0.0]).to(x.device)
 
         if optimizer_idx == 0:
@@ -258,7 +259,7 @@ class ImplicitDecoder(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x = self.get_input(batch, self.image_key)
-        xrec = self(x)
+        xrec, x = self(x)
         qloss = torch.tensor([0.0]).to(x.device)
         aeloss, log_dict_ae = self.loss(qloss, x, xrec, 0, self.global_step,
                                             last_layer=self.get_last_layer(), split="val")
@@ -276,9 +277,8 @@ class ImplicitDecoder(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         from PIL import Image
-
         x = self.get_input(batch, self.image_key)
-        xrec = self(x)
+        xrec, x = self(x)
         qloss = torch.tensor([0.0]).to(x.device)
 
         aeloss, log_dict_ae = self.loss(qloss, x, xrec, 0, self.global_step,
@@ -298,13 +298,13 @@ class ImplicitDecoder(pl.LightningModule):
         return self.log_dict
 
     def get_last_layer(self):
-        return self.decoder.conv_out.weight
+        return self.mlp.last_conv.layer.weight
 
     def log_images(self, batch, **kwargs):
         log = dict()
         x = self.get_input(batch, self.image_key)
         x = x.to(self.device)
-        xrec = self(x)
+        xrec, x = self(x)
         if x.shape[1] > 3:
             # colorize with random projection
             assert xrec.shape[1] > 3
@@ -324,11 +324,7 @@ class ImplicitDecoder(pl.LightningModule):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        opt_ae = torch.optim.Adam(list(self.encoder.parameters())+
-                                  list(self.decoder.parameters())+
-                                  list(self.quantize.parameters())+
-                                  list(self.quant_conv.parameters())+
-                                  list(self.post_quant_conv.parameters()),
+        opt_ae = torch.optim.Adam(list(self.mlp.parameters()),
                                   lr=lr, betas=(0.5, 0.9))
         opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(),
                                     lr=lr, betas=(0.5, 0.9))

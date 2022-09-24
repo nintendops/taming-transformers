@@ -30,6 +30,8 @@ model:
           attn_resolutions:
           - 16
           dropout: 0.0
+        lossconfig:
+          target: taming.modules.losses.DummyLoss
     lossconfig:
       target: taming.modules.losses.vqperceptual.VQLPIPSWithDiscriminator
       params:
@@ -38,7 +40,6 @@ model:
         disc_start: 250001
         disc_weight: 0.8
         codebook_weight: 0.0
-    cond_stage_config: "__is_unconditional__"
 data:
   target: main.DataModuleFromConfig
   params:
