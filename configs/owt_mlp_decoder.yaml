@@ -1,0 +1,55 @@
+model:
+  base_learning_rate: 4.5e-06
+  target: taming.models.impgan.ImplicitDecoder
+  params:
+    mlp_config:
+      n_features: [128,128,128,128,128,128,128,128,128,128]
+      nf_in: 276 # 2x5x2 + 256
+      nf_out: 3
+    first_stage_config:
+      target: taming.models.vqgan.VQModel
+      params:
+        ckpt_path: logs/2022-09-01T18-39-08_usc_272_zp_vqgan/checkpoints/last.ckpt
+        embed_dim: 256
+        n_embed: 8192
+        ddconfig:
+          padding_free: false
+          double_z: false
+          z_channels: 256
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 1
+          - 2
+          - 2
+          - 4
+          num_res_blocks: 2
+          attn_resolutions:
+          - 16
+          dropout: 0.0
+    lossconfig:
+      target: taming.modules.losses.vqperceptual.VQLPIPSWithDiscriminator
+      params:
+        disc_conditional: False
+        disc_in_channels: 3
+        disc_start: 250001
+        disc_weight: 0.8
+        codebook_weight: 0.0
+    cond_stage_config: "__is_unconditional__"
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 2
+    train:
+      target: taming.data.owt.OWTBase
+      params:
+        size: 272
+        # dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
+        dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
+        # dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
+        crop_size: 256
+        onehot_segmentation: true
+

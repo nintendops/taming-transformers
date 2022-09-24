@@ -448,6 +448,35 @@ class Encoder(nn.Module):
         return h
 
 
+###########################################################################
+from taming.modules.diffusionmodules.core_layers import Conv2dBlock as ConvBlock
+class mlpDecoder(nn.Module):
+    def __init__(self, *, 
+                    n_features = [128]*10, 
+                    nf_in = 276, 
+                    nf_out = 3, 
+                    activation='relu'):
+        super(mlpDecoder, self).__init__()
+        self.blocks = nn.ModuleList()
+        c = nf_in
+        for idx, c_out in enumerate(n_features):
+            block_i = ConvBlock(c, c_out, 1, 1, 0, None, activation)
+            self.blocks.append(block_i)
+            c = c_out
+        self.last_conv = ConvBlock(c, nf_out, 1, 1, 0, None, None)
+        self.blocks.append(self.last_conv)
+        self.activation = nn.Tanh()
+
+    def forward(self, x, y=None):
+        for block in self.blocks:
+            x = block(x)
+        x = self.activation(x)
+        if y is not None:
+            x = x + y
+        return x
+####################################################################################
+
+
 class Decoder(nn.Module):
     def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks,
                  attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
