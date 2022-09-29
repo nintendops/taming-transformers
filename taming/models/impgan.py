@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from taming.modules.diffusionmodules.model import mlpDecoder
+from taming.modules.diffusionmodules.model import mlpDecoder, Decoder
 from taming.modules.util import SOSProvider
 from main import instantiate_from_config
 
@@ -153,6 +153,7 @@ def positional_encoding(x, l=5, beta=None):
 
 class ImplicitDecoder(pl.LightningModule):
     def __init__(self,
+                 ddconfig,
                  mlp_config,
                  first_stage_config,
                  lossconfig,
@@ -167,7 +168,10 @@ class ImplicitDecoder(pl.LightningModule):
         self.crop_res = crop_res
         self.shift_scale = shift_scale
         self.dist_shift = get_distribution_type([1,2], type='uniform')
+        
         self.mlp = mlpDecoder(**mlp_config)
+        # self.mlp = Decoder(**ddconfig)
+
         self.loss = instantiate_from_config(lossconfig)
         self.image_key = image_key
 
@@ -203,16 +207,21 @@ class ImplicitDecoder(pl.LightningModule):
 
     def forward(self, x):
         quant, indices = self.encode_to_z(x)
+        scale = self.shift_scale
         # random cropping to model stationary shift
         cgs, shift = get_cropped_coord_grid(quant.device, 
                                             self.dist_shift, 
                                             quant.shape[0], 
                                             x.shape[2], 
                                             self.crop_res, 
-                                            self.shift_scale)
+                                            scale)
         cropped_x = crop_input(quant.device, x, shift, quant.shape[0], crop_res=self.crop_res)
-        # feature sampling
-        feat = stationary_noise(cgs, quant)  
+        #############################################
+        # cgs = scale * get_position([256, 256], 2, x.device, x.shape[0])
+        # cropped_x = x
+        ##############################################
+        # # feature sampling
+        feat = stationary_noise(cgs, quant, scale=scale)  
         fourier = positional_encoding(cgs)
         feat = torch.cat([fourier, feat], 1)
         # decoding
@@ -299,6 +308,7 @@ class ImplicitDecoder(pl.LightningModule):
 
     def get_last_layer(self):
         return self.mlp.last_conv.layer.weight
+        # return self.mlp.conv_out.weight
 
     def log_images(self, batch, **kwargs):
         log = dict()

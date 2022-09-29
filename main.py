@@ -12,7 +12,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, Callback, LearningRateM
 from pytorch_lightning.utilities.distributed import rank_zero_only
 
 from taming.data.utils import custom_collate
-
+import taming.visualizer as V
 
 def get_obj_from_str(string, reload=False):
     module, cls = string.rsplit(".", 1)
@@ -69,6 +69,15 @@ def get_parser(**parser_kwargs):
         default=False,
         nargs="?",
         help="train",
+    )
+    parser.add_argument(
+        "-v",
+        "--visdom",
+        type=str2bool,
+        const=True,
+        default=False,
+        nargs="?",
+        help="visdom",
     )
     parser.add_argument(
         "--no-test",
@@ -216,7 +225,7 @@ class SetupCallback(Callback):
 
 
 class ImageLogger(Callback):
-    def __init__(self, batch_frequency, max_images, clamp=True, increase_log_steps=True, disable_image_logging=False):
+    def __init__(self, batch_frequency, max_images, clamp=True, increase_log_steps=True, disable_image_logging=False, visualizer=False):
         super().__init__()
         self.disable_image_logging = disable_image_logging
         self.batch_freq = batch_frequency
@@ -229,6 +238,7 @@ class ImageLogger(Callback):
         if not increase_log_steps:
             self.log_steps = [self.batch_freq]
         self.clamp = clamp
+        self.visualizer = V.Visualizer() if visualizer else None
 
     @rank_zero_only
     def _wandb(self, pl_module, images, batch_idx, split):
@@ -271,6 +281,7 @@ class ImageLogger(Callback):
             Image.fromarray(grid).save(path)
 
     def log_img(self, pl_module, batch, batch_idx, split="train"):
+        
         if self.disable_image_logging:
             return
         if (self.check_frequency(batch_idx) and  # batch_idx % self.batch_freq == 0
@@ -285,6 +296,9 @@ class ImageLogger(Callback):
 
             with torch.no_grad():
                 images = pl_module.log_images(batch, split=split, pl_module=pl_module)
+
+            if self.visualizer is not None:
+                self.visualizer.display_current_results(images)
 
             for k in images:
                 N = min(images[k].shape[0], self.max_images)
@@ -362,6 +376,8 @@ if __name__ == "__main__":
     #           params:
     #               key: value
 
+
+
     now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
 
     # add cwd for convenience and to make classes in this file available when
@@ -379,6 +395,7 @@ if __name__ == "__main__":
             "If you want to resume training in a new log folder, "
             "use -n/--name in combination with --resume_from_checkpoint"
         )
+
     if opt.resume:
         if not os.path.exists(opt.resume):
             raise ValueError("Cannot find {}".format(opt.resume))
@@ -506,10 +523,11 @@ if __name__ == "__main__":
             "image_logger": {
                 "target": "main.ImageLogger",
                 "params": {
-                    "batch_frequency": 750,
+                    "batch_frequency": 500,
                     "max_images": 4,
                     "clamp": True,
-                    "disable_image_logging": config.disable_image_logging is not None and config.disable_image_logging is True
+                    "disable_image_logging": config.disable_image_logging is not None and config.disable_image_logging is True,
+                    "visualizer": opt.visdom,
                 }
             },
             "learning_rate_logger": {

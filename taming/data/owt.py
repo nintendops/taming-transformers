@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 from taming.data.base import ImagePaths, NumpyPaths, ConcatDatasetWithIndex
 from PIL import Image
 
+DEBUG_MODE = False
 
 class OWTBase(Dataset):
     def __init__(self, size=None, dataroot="", multiplier=20, onehot_segmentation=False, 
@@ -114,6 +115,8 @@ class OWTBase(Dataset):
         return image, segmentation, image_rescaled
 
     def get(self, i):
+        if DEBUG_MODE:
+            i = 0
         img_path = self.img_id_to_filepath[self.labels["image_ids"][i]]
         seg_path = self.img_id_to_segmentation_filepath[self.labels["image_ids"][i]]
         image, segmentation, image_rescaled = self.preprocess_image(img_path, seg_path)
@@ -131,6 +134,10 @@ class OWTBase(Dataset):
         return example
 
     def __getitem__(self, i):
+
+        if DEBUG_MODE:
+            i = 0 # np.random.randint(low=0,high=2) # 0
+
         img_path = self.img_id_to_filepath[self.labels["image_ids"][i]]
         seg_path = self.img_id_to_segmentation_filepath[self.labels["image_ids"][i]]
         image, segmentation, image_rescaled = self.preprocess_image(img_path, seg_path)

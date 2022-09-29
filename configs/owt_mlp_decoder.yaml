@@ -1,9 +1,26 @@
 model:
-  base_learning_rate: 4.5e-06
+  base_learning_rate: 4.5e-05
   target: taming.models.impgan.ImplicitDecoder
   params:
+    ddconfig:
+      padding_free: true
+      double_z: false
+      z_channels: 256
+      resolution: 256
+      in_channels: 3
+      out_ch: 3
+      ch: 128
+      ch_mult:
+      - 1
+      - 1
+      - 2
+      - 2
+      - 4
+      num_res_blocks: 2
+      attn_resolutions:
+      - 16
+      dropout: 0.0
     mlp_config:
-      n_features: [128,128,128,128,128,128,128,128,128,128]
       nf_in: 276 # 2x5x2 + 256
       nf_out: 3
     first_stage_config:
@@ -38,7 +55,7 @@ model:
         disc_conditional: False
         disc_in_channels: 3
         disc_start: 250001
-        disc_weight: 0.8
+        disc_weight: 0.0 # 0.8
         codebook_weight: 0.0
 data:
   target: main.DataModuleFromConfig

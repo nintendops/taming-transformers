@@ -452,7 +452,7 @@ class Encoder(nn.Module):
 from taming.modules.diffusionmodules.core_layers import Conv2dBlock as ConvBlock
 class mlpDecoder(nn.Module):
     def __init__(self, *, 
-                    n_features = [128]*10, 
+                    n_features = [1024]*20, 
                     nf_in = 276, 
                     nf_out = 3, 
                     activation='relu'):
@@ -465,11 +465,14 @@ class mlpDecoder(nn.Module):
             c = c_out
         self.last_conv = ConvBlock(c, nf_out, 1, 1, 0, None, None)
         self.blocks.append(self.last_conv)
-        self.activation = nn.Tanh()
+        self.activation = nn.Tanh() # torch.sigmoid # nonlinearity # torch.sigmoid
 
     def forward(self, x, y=None):
-        for block in self.blocks:
-            x = block(x)
+        for idx, block in enumerate(self.blocks):
+            if idx > 0 and idx < len(self.blocks) - 1:
+                x = block(x) + x
+            else:
+                x = block(x)
         x = self.activation(x)
         if y is not None:
             x = x + y
