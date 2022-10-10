@@ -71,8 +71,13 @@ class VQModel(pl.LightningModule):
 
     def decode(self, quant):
         quant = self.post_quant_conv(quant)
-        dec = self.decoder(quant)
+        dec, _ = self.decoder(quant)
         return dec
+
+    def decode_at_layer(self, quant, i):
+        quant = self.post_quant_conv(quant)
+        _, feat = self.decoder(quant, target_i_level = i)
+        return feat
 
     def decode_code(self, code_b):
         quant_b = self.quantize.embed_code(code_b)

@@ -53,18 +53,24 @@ def get_cropped_coord_grid(device,
                            nb,  
                            res=256, 
                            crop_res=128, 
-                           scale=2.0):
+                           scale=2.0,
+                           det=False):
 
     coord_grid = scale * get_position([res, res], 2, device, nb)
     # dist_shift = get_distribution_type([1,2], type='uniform')
     coord_grid_sample = torch.zeros([nb, 2, crop_res, crop_res]).to(device)
     shift = 0.5 * (dist_shift.sample([nb]) + 1) * (res - crop_res)
     shift = shift.int().reshape(nb,2)
+
+    if det:
+        shift = shift * 0
+
     for idx, s in enumerate(shift):
         dx,dy = s
         dx = int(dx.item())
         dy = int(dy.item())
         coord_grid_sample[idx] = coord_grid[idx, :, dx:dx+crop_res, dy:dy+crop_res]
+
     return coord_grid_sample, shift
 
 def crop_input(device, x, shift, nb, crop_res=128):
@@ -157,7 +163,7 @@ class ImplicitDecoder(pl.LightningModule):
                  mlp_config,
                  first_stage_config,
                  lossconfig,
-                 crop_res = 128,
+                 crop_res,
                  shift_scale = 2.0,
                  ckpt_path=None,
                  image_key="image",
@@ -170,7 +176,6 @@ class ImplicitDecoder(pl.LightningModule):
         self.dist_shift = get_distribution_type([1,2], type='uniform')
         
         self.mlp = mlpDecoder(**mlp_config)
-        # self.mlp = Decoder(**ddconfig)
 
         self.loss = instantiate_from_config(lossconfig)
         self.image_key = image_key
@@ -197,35 +202,61 @@ class ImplicitDecoder(pl.LightningModule):
 
     @torch.no_grad()
     def encode_to_z(self, x):
+        layer_i = 3
         quant_z, _, info = self.first_stage_model.encode(x)
         indices = info[2].view(quant_z.shape[0], quant_z.shape[2], quant_z.shape[3])
+        quant_z = self.first_stage_model.decode_at_layer(quant_z, layer_i)
         return quant_z, indices
 
-    def decode(self, quant):
-        dec = self.mlp(quant)
-        return dec
-
-    def forward(self, x):
-        quant, indices = self.encode_to_z(x)
+    def decode(self, quant, det=False):
+        # prepare input coordinates
         scale = self.shift_scale
         # random cropping to model stationary shift
         cgs, shift = get_cropped_coord_grid(quant.device, 
                                             self.dist_shift, 
                                             quant.shape[0], 
-                                            x.shape[2], 
+                                            x_size, 
                                             self.crop_res, 
-                                            scale)
-        cropped_x = crop_input(quant.device, x, shift, quant.shape[0], crop_res=self.crop_res)
-        #############################################
-        # cgs = scale * get_position([256, 256], 2, x.device, x.shape[0])
-        # cropped_x = x
-        ##############################################
+                                            scale,
+                                            det=det)
+
         # # feature sampling
         feat = stationary_noise(cgs, quant, scale=scale)  
         fourier = positional_encoding(cgs)
         feat = torch.cat([fourier, feat], 1)
+        dec = self.mlp(quant)
+        return dec, shift
+
+
+    def decode_with_shift(self, quant, x_size, det=False):
+        # prepare input coordinates
+        scale = self.shift_scale
+        # random cropping to model stationary shift
+        cgs, shift = get_cropped_coord_grid(quant.device, 
+                                            self.dist_shift, 
+                                            quant.shape[0], 
+                                            x_size, 
+                                            self.crop_res, 
+                                            scale,
+                                            det=det)
+
+        ######### DEBUG SETTING ###########################
+        # cgs = scale * get_position([256, 256], 2, x.device, x.shape[0])
+        # cropped_x = x
+        ###################################################
+
+        # # feature sampling
+        feat = stationary_noise(cgs, quant, scale=scale)  
+        fourier = positional_encoding(cgs)
+        feat = torch.cat([fourier, feat], 1)
+        dec = self.mlp(quant)
+        return dec, shift
+
+    def forward(self, x):
+        quant, _ = self.encode_to_z(x)
         # decoding
-        dec = self.decode(feat)
+        dec, shift = self.decode_with_shift(quant, x.shape[2])
+        cropped_x = crop_input(quant.device, x, shift, quant.shape[0], crop_res=self.crop_res)
         return dec, cropped_x
 
     def log_images(self, batch, **kwargs):

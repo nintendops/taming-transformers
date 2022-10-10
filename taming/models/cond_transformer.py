@@ -16,8 +16,9 @@ def disabled_train(self, mode=True):
 class Net2NetTransformer(pl.LightningModule):
     def __init__(self,
                  transformer_config,
-                 first_stage_config,
                  cond_stage_config,
+                 first_stage_config=None,
+                 implicit_stage_config=None,
                  permuter_config=None,
                  ckpt_path=None,
                  ignore_keys=[],
@@ -33,8 +34,8 @@ class Net2NetTransformer(pl.LightningModule):
         self.sos_token = sos_token
         self.first_stage_key = first_stage_key
         self.cond_stage_key = cond_stage_key
-        self.init_first_stage_from_ckpt(first_stage_config)
         self.init_cond_stage_from_ckpt(cond_stage_config)
+        self.init_first_stage_from_ckpt(first_stage_config, implicit_stage_config)
         if permuter_config is None:
             permuter_config = {"target": "taming.modules.transformer.permuter.Identity"}
         self.permuter = instantiate_from_config(config=permuter_config)
@@ -55,11 +56,19 @@ class Net2NetTransformer(pl.LightningModule):
         self.load_state_dict(sd, strict=False)
         print(f"Restored from {path}")
 
-    def init_first_stage_from_ckpt(self, config):
-        model = instantiate_from_config(config)
-        model = model.eval()
-        model.train = disabled_train
-        self.first_stage_model = model
+    def init_first_stage_from_ckpt(self, config, config_implicit):
+        if config_implicit is None:
+            model = instantiate_from_config(config)
+            model = model.eval()
+            model.train = disabled_train
+            self.mlp_model = None
+            self.first_stage_model = model
+        else:
+            model = instantiate_from_config(config_implicit)
+            model = model.eval()
+            model.train = disabled_train
+            self.mlp_model = model
+            self.first_stage_model = self.mlp_model.first_stage_model
 
     def init_cond_stage_from_ckpt(self, config):
         if config == "__is_first_stage__":
@@ -202,7 +211,8 @@ class Net2NetTransformer(pl.LightningModule):
         bhwc = (zshape[0],zshape[2],zshape[3],zshape[1])
         quant_z = self.first_stage_model.quantize.get_codebook_entry(
             index.reshape(-1), shape=bhwc)
-        x = self.first_stage_model.decode(quant_z)
+        model = self.first_stage_model if self.mlp_model is None else self.mlp_model
+        x = model.decode(quant_z)
         if use_softmax or self.first_stage_key != 'image':
             x = F.softmax(x, dim=1)
         return x

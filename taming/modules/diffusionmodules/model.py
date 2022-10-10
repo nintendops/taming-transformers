@@ -470,7 +470,7 @@ class mlpDecoder(nn.Module):
     def forward(self, x, y=None):
         for idx, block in enumerate(self.blocks):
             if idx > 0 and idx < len(self.blocks) - 1:
-                x = block(x) + x
+                x = block(x)
             else:
                 x = block(x)
         x = self.activation(x)
@@ -556,7 +556,7 @@ class Decoder(nn.Module):
                                     stride=1,
                                     padding=padding)
 
-    def forward(self, z):
+    def forward(self, z, target_i_level=0):
         #assert z.shape[1:] == self.z_shape[1:]
         self.last_z_shape = z.shape
 
@@ -568,35 +568,41 @@ class Decoder(nn.Module):
 
         # z to block_in
         h = self.conv_in(z)
-        # print("Tensor conv_in: Shape", z.shape)
+        # print("Tensor conv_in: Shape", h.shape)
         # import ipdb; ipdb.set_trace()
 
         # middle
         h = self.mid.block_1(h, temb)
-        # print("Tensor mid block 1: Shape", z.shape)
+        # print("Tensor mid block 1: Shape", h.shape)
         # import ipdb; ipdb.set_trace()
         h = self.mid.attn_1(h)
         h = self.mid.block_2(h, temb)
-        # print("Tensor mid block 2: Shape", z.shape)
+        # print("Tensor mid block 2: Shape", h.shape)
         # import ipdb; ipdb.set_trace()
+
+        feat = h if target_i_level == 0 else None
 
         # upsampling
         for i_level in reversed(range(self.num_resolutions)):
             for i_block in range(self.num_res_blocks+1):
                 h = self.up[i_level].block[i_block](h, temb)
+                # print(f"Tensor up block level {i_level}: Shape", h.shape)
+                # import ipdb; ipdb.set_trace()
                 if len(self.up[i_level].attn) > 0:
                     h = self.up[i_level].attn[i_block](h)
             if i_level != 0:
                 h = self.up[i_level].upsample(h)
+                if i_level == target_i_level:
+                    feat = h
 
         # end
         if self.give_pre_end:
-            return h
+            return h, feat
 
         h = self.norm_out(h)
         h = nonlinearity(h)
         h = self.conv_out(h)
-        return h
+        return h, feat
 
 
 class VUNet(nn.Module):

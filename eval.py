@@ -196,7 +196,7 @@ def eval_mult(batch,
               cropped_ratio=0.0, 
               n_sample=4, 
               inpainting=True,
-              split_generate = False,
+              split_generate = True,
               do_not_generate=False):
 
     # ---------------------- first log the input data -----------------------------
@@ -376,8 +376,8 @@ if __name__ == '__main__':
 
     # key configuration: config path
     ###################################################
-    config_path = "logs/2022-09-12T23-47-00_clevr_nc_transformer/configs/2022-09-12T23-47-00-project.yaml"
-    # config_path = "configs/owt_cond_transformer.yaml"
+    # config_path = "logs/2022-09-12T23-47-00_clevr_nc_transformer/configs/2022-09-12T23-47-00-project.yaml"
+    config_path = "configs/owt_implicit_transformer.yaml"
     config_path_cond = "configs/owt_cond_transformer.yaml"
     ###################################################
     
@@ -403,8 +403,8 @@ if __name__ == '__main__':
     
     # key configuration: ckpt path
     ###################################################
-    # ckpt_path = "logs/2022-08-22T16-25-50_owt_cond_pf_transformer/checkpoints/last.ckpt"
-    ckpt_path = "logs/2022-09-12T23-47-00_clevr_nc_transformer/checkpoints/last.ckpt"
+    ckpt_path = "logs/2022-08-18T17-17-56_usc_512_pf_transformer/checkpoints/last.ckpt"
+    # ckpt_path = "logs/2022-09-12T23-47-00_clevr_nc_transformer/checkpoints/last.ckpt"
     # ckpt_path_cond = "logs/2022-08-22T16-25-50_owt_cond_pf_transformer/checkpoints/last.ckpt"
     ###################################################
 
@@ -430,7 +430,7 @@ if __name__ == '__main__':
     dataset = data.datasets['train']
     dataset_iter = iter(data._train_dataloader())
 
-    scale = 4
+    scale = 2
     data_select = [5,13,16,20,23,26,7,8,9,10,11,12] # range(len(dataset))
     # data_select = [2,3,4,7,8,9,11,13,14,21,25,29,31]
     with torch.no_grad():

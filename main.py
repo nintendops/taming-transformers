@@ -44,6 +44,14 @@ def get_parser(**parser_kwargs):
         help="postfix for logdir",
     )
     parser.add_argument(
+        "--port",
+        type=int,
+        const=True,
+        default=8097,
+        nargs="?",
+        help="portt for visdom",
+    )
+    parser.add_argument(
         "-r",
         "--resume",
         type=str,
@@ -225,7 +233,7 @@ class SetupCallback(Callback):
 
 
 class ImageLogger(Callback):
-    def __init__(self, batch_frequency, max_images, clamp=True, increase_log_steps=True, disable_image_logging=False, visualizer=False):
+    def __init__(self, batch_frequency, max_images, clamp=True, increase_log_steps=True, disable_image_logging=False, visualizer=False, port=8097):
         super().__init__()
         self.disable_image_logging = disable_image_logging
         self.batch_freq = batch_frequency
@@ -238,7 +246,7 @@ class ImageLogger(Callback):
         if not increase_log_steps:
             self.log_steps = [self.batch_freq]
         self.clamp = clamp
-        self.visualizer = V.Visualizer() if visualizer else None
+        self.visualizer = V.Visualizer(port=port) if visualizer else None
 
     @rank_zero_only
     def _wandb(self, pl_module, images, batch_idx, split):
@@ -528,6 +536,7 @@ if __name__ == "__main__":
                     "clamp": True,
                     "disable_image_logging": config.disable_image_logging is not None and config.disable_image_logging is True,
                     "visualizer": opt.visdom,
+                    "port": opt.port,
                 }
             },
             "learning_rate_logger": {

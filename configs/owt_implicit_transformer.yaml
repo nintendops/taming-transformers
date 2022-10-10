@@ -1,0 +1,112 @@
+model:
+  disable_zero_padding: false
+  base_learning_rate: 4.5e-06
+  target: taming.models.cond_transformer.Net2NetTransformer
+  params:
+    cond_stage_key: segmentation
+    transformer_config:
+      target: taming.modules.transformer.mingpt.CondGPT
+      params:
+        vocab_size: 8192
+        vocab_size_cond: 1024
+        block_size: 512  # = 256 + 256 = dim(vqgan_latent_space,16x16) + dim(conditional_builder.embedding_dim)
+        n_layer: 24
+        n_head: 16
+        n_embd: 1408
+        embd_pdrop: 0.1
+        resid_pdrop: 0.1
+        attn_pdrop: 0.1
+    implicit_stage_config:
+        target: taming.models.impgan.ImplicitDecoder
+        ckpt_path: logs/2022-10-05T06-46-01_owt_mlp_256/checkpoints/last.ckpt
+        params:
+          ddconfig:
+            padding_free: true
+            double_z: false
+            z_channels: 256
+            resolution: 256
+            in_channels: 3
+            out_ch: 3
+            ch: 128
+            ch_mult:
+            - 1
+            - 1
+            - 2
+            - 2
+            - 4
+            num_res_blocks: 2
+            attn_resolutions:
+            - 16
+            dropout: 0.0
+          mlp_config:
+            nf_in: 276  #276 # 532 # 2x5x2 + 256
+            nf_out: 3
+          first_stage_config:
+            target: taming.models.vqgan.VQModel
+            params:
+              ckpt_path: logs/2022-08-12T07-21-07_usc_512_pfvqgan/checkpoints/last.ckpt
+              embed_dim: 256
+              n_embed: 8192
+              ddconfig:
+                padding_free: true
+                double_z: false
+                z_channels: 256
+                resolution: 256
+                in_channels: 3
+                out_ch: 3
+                ch: 128
+                ch_mult:
+                - 1
+                - 1
+                - 2
+                - 2
+                - 4
+                num_res_blocks: 2
+                attn_resolutions:
+                - 16
+                dropout: 0.0
+              lossconfig:
+                target: taming.modules.losses.DummyLoss
+    cond_stage_config:
+      target: taming.models.vqgan.VQSegmentationModel
+      params:
+        ckpt_path: logs/2022-08-10T02-20-22_usc_512_pfvqgan_cond/checkpoints/last.ckpt
+        embed_dim: 128
+        n_embed: 1024
+        image_key: "segmentation"
+        n_labels: 3
+        ddconfig:
+          padding_free: true
+          double_z: false
+          z_channels: 256
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 1
+          - 2
+          - 2
+          - 4
+          num_res_blocks: 2
+          attn_resolutions:
+          - 16
+          dropout: 0.0
+        lossconfig:
+          target: taming.modules.losses.DummyLoss
+
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 2
+    train:
+      target: taming.data.owt.OWTBase
+      params:
+        size: 512
+        # dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
+        # dataroot: "/home/ICT2000/chenh/Haiwei/Datasets/OWT/USC_Galen_Center"
+        dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
+        # dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
+        crop_size: 256
+        onehot_segmentation: true
