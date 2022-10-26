@@ -170,6 +170,7 @@ class Net2NetTransformer(pl.LightningModule):
                     logits, _ = self.transformer(x_cond, c)
                 else:
                     logits, _ = self.transformer(x_cond)
+
                 # pluck the logits at the final step and scale by temperature
                 logits = logits[:, -1, :] / temperature
                 # optionally crop probabilities to only the top k options
@@ -211,8 +212,12 @@ class Net2NetTransformer(pl.LightningModule):
         bhwc = (zshape[0],zshape[2],zshape[3],zshape[1])
         quant_z = self.first_stage_model.quantize.get_codebook_entry(
             index.reshape(-1), shape=bhwc)
-        model = self.first_stage_model if self.mlp_model is None else self.mlp_model
-        x = model.decode(quant_z)
+
+        if self.mlp_model is None:
+            x = self.first_stage_model.decode(quant_z)
+        else:
+            x = self.mlp_model.decode(quant_z)
+
         if use_softmax or self.first_stage_key != 'image':
             x = F.softmax(x, dim=1)
         return x

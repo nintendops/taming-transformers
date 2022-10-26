@@ -7,7 +7,7 @@ from subprocess import Popen, PIPE
 #################### visdom function #############################################
 
 class Visualizer():
-    def __init__(self, display_id=1, address="172.16.33.116", port=8096):    
+    def __init__(self, display_id=1, address="172.16.33.116", port=8097):    
         """Initialize the Visualizer class
         Parameters:
             opt -- stores all the experiment flags; needs to be a subclass of BaseOptions

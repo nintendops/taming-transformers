@@ -2,7 +2,9 @@
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
+from taming.modules.diffusionmodules.core_layers import Conv2dBlock as ConvBlock
 
 
 def get_timestep_embedding(timesteps, embedding_dim):
@@ -447,9 +449,7 @@ class Encoder(nn.Module):
         h = self.conv_out(h)
         return h
 
-
 ###########################################################################
-from taming.modules.diffusionmodules.core_layers import Conv2dBlock as ConvBlock
 class mlpDecoder(nn.Module):
     def __init__(self, *, 
                     n_features = [1024]*20, 
@@ -477,8 +477,154 @@ class mlpDecoder(nn.Module):
         if y is not None:
             x = x + y
         return x
-####################################################################################
 
+class RestrictedUpconv2D(torch.nn.Module):
+    def __init__(self, c_in, c_out, stride=2, activation=F.relu):
+        super().__init__()
+        if isinstance(stride, tuple):
+            assert len(stride) == 2
+            sx, sy = stride
+        else:
+            assert isinstance(stride, int)
+            sx = sy = stride
+
+        self.activation = activation
+        self.mlp = torch.nn.Conv2d(c_in, c_out*sx*sy, kernel_size=1, bias=False)
+        self.sx = sx
+        self.sy = sy
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        x = self.activation(self.mlp(x)) # B, C*sx*sy, H, W 
+        x = x.reshape(B, -1, self.sx, self.sy, H, W)
+        x = x.permute(0,1,4,2,5,3).reshape(B, -1, self.sx*H, self.sy*W)
+        return x
+
+class MappingLayer(torch.nn.Module):
+    def __init__(self, c_in, c_out, chs, kernel_size=3, activation=F.relu):
+        super().__init__()
+
+        assert kernel_size % 2 == 1 and kernel_size >= 3
+        padding = (kernel_size - 1) // 2
+        # band-limited mapping with a 3x3 convolution
+        self.mapping_conv1 = nn.Conv2d(c_in, c_out, kernel_size=kernel_size, stride=1, padding=padding)
+        c_in = c_out
+
+        # sequential 1x1 convs 
+        self.mapping_conv2 = nn.ModuleList()
+        for idx, ch in enumerate(chs):            
+            self.mapping_conv2.append(nn.Conv2d(c_in, ch, kernel_size=1))
+            c_in = ch
+
+        self.activation = activation
+
+    def forward(self, x):
+        x = self.mapping_conv1(x)
+        x = self.activation(x)
+        for conv in self.mapping_conv2:
+            x = conv(x)
+            x = self.activation(x)
+        return x
+
+class RestrictedDecoder(nn.Module):
+    def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks,
+                 attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
+                 resolution, z_channels, give_pre_end=False, padding_free=True, **ignorekwargs):
+        super().__init__()
+        self.ch = ch
+        self.temb_ch = 0
+        self.num_resolutions = len(ch_mult)
+        self.num_res_blocks = num_res_blocks + 3
+        self.resolution = resolution
+        self.in_channels = in_channels
+        self.give_pre_end = give_pre_end
+
+        # compute in_ch_mult, block_in and curr_res at lowest res
+        in_ch_mult = (1,)+tuple(ch_mult)
+        block_in = ch*ch_mult[self.num_resolutions-1]
+        curr_res = resolution // 2**(self.num_resolutions-1)
+        self.z_shape = (1,z_channels,curr_res,curr_res)
+        print("Working with z of shape {} = {} dimensions.".format(
+            self.z_shape, np.prod(self.z_shape)))
+
+        # mapping layer
+        self.mapping = MappingLayer(
+            c_in = z_channels,
+            c_out = block_in,
+            chs = [block_in]*5,
+            kernel_size = 5
+        )
+
+        # upsampling
+        self.up = nn.ModuleList()
+        for i_level in reversed(range(self.num_resolutions)):
+            block = nn.ModuleList()
+            block_out = ch*ch_mult[i_level]
+
+            if i_level != 0:
+                block.append(RestrictedUpconv2D(c_in=block_in,
+                                                c_out=block_out,
+                                                stride=2))
+            else:
+                # no upsampling at last layer
+                block.append(nn.Conv2d(block_in,
+                                       block_out,
+                                       kernel_size=1))
+                block.append(nn.ReLU(inplace=True))
+
+            for i_block in range(self.num_res_blocks):
+                block.append(nn.Conv2d(block_out, block_out, kernel_size=1, stride=1))
+                block.append(nn.ReLU(inplace=True))
+
+            block_in = block_out           
+            up = nn.Module()
+            up.block = block
+            curr_res = curr_res * 2
+            self.up.append(up)
+            # self.up.insert(0, up) # prepend to get consistent order
+
+        # end
+        # self.norm_out = Normalize(block_in)
+        self.conv_out = nn.Conv2d(block_in,
+                                  out_ch,
+                                  kernel_size=1,
+                                  stride=1)
+    
+    def _map(self, z):
+        return self.mapping(z)
+
+    def _generate(self,z):
+        h = z
+        for block_i, block in enumerate(self.up):
+            for layer_i, layer in enumerate(block.block):
+                h = layer(h)
+        if self.give_pre_end:
+            return h
+        # h = self.norm_out(h)
+        h = nonlinearity(h)
+        h = self.conv_out(h)
+        return h
+
+    def forward(self, z, target_i_level=0):
+        self.last_z_shape = z.shape
+        # z to block_in
+        h = self._map(z)
+        feat = h if target_i_level == 0 else None
+        # upsampling
+        for block_i, block in enumerate(self.up):
+            for layer_i, layer in enumerate(block.block):
+                h = layer(h)
+            if block_i == target_i_level:
+                feat = h
+        # end
+        if self.give_pre_end:
+            return h, feat
+        # h = self.norm_out(h)
+        h = nonlinearity(h)
+        h = self.conv_out(h)
+        return h, feat
+
+####################################################################################
 
 class Decoder(nn.Module):
     def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks,
@@ -555,6 +701,14 @@ class Decoder(nn.Module):
                                     kernel_size=3,
                                     stride=1,
                                     padding=padding)
+
+
+    def _map(self, z):
+        return z
+
+    def _generate(self, z):
+        h, _ = self.forward(z)
+        return h
 
     def forward(self, z, target_i_level=0):
         #assert z.shape[1:] == self.z_shape[1:]

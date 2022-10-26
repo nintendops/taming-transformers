@@ -6,9 +6,9 @@ model:
     transformer_config:
       target: taming.modules.transformer.mingpt.GPT
       params:
-        vocab_size: 8192
-        block_size: 512  # = 256 + 256 = dim(vqgan_latent_space,16x16) 
-        n_layer: 40 # 24,40
+        vocab_size: 512
+        block_size: 512  # dim(vqgan_latent_space,16x16) 
+        n_layer: 24 # 24,40
         n_head: 16
         n_embd: 1408
         embd_pdrop: 0.1
@@ -17,14 +17,14 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/2022-08-12T07-21-07_usc_512_pfvqgan/checkpoints/last.ckpt
+        ckpt_path: logs/2022-10-13T01-33-17_paisley/checkpoints/last.ckpt
         embed_dim: 256
-        n_embed: 8192
+        n_embed: 512
         ddconfig:
-          padding_free: true
+          padding_free: false
           double_z: false
           z_channels: 256
-          resolution: 256
+          resolution: 128
           in_channels: 3
           out_ch: 3
           ch: 128
@@ -46,12 +46,9 @@ data:
   params:
     batch_size: 2
     train:
-      target: taming.data.owt.OWTBase
+      target: taming.data.exemplar.ImageFolder
       params:
-        size: 512
-        # dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
-        dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
-        # dataroot: "/vgldb1/OWT/07-10-2020/RealData/Catalina/OutputImageSegmentation_Catalina/Images/"
-        crop_size: 256
-        onehot_segmentation: true
+        size: 368
+        dataroot: "/home/ICT2000/chenh/Datasets/paisley"
+        crop_size: 128
 

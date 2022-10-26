@@ -208,25 +208,17 @@ class ImplicitDecoder(pl.LightningModule):
         quant_z = self.first_stage_model.decode_at_layer(quant_z, layer_i)
         return quant_z, indices
 
-    def decode(self, quant, det=False):
+    def decode(self, quant, res, expansion=2.0, det=False):
         # prepare input coordinates
-        scale = self.shift_scale
-        # random cropping to model stationary shift
-        cgs, shift = get_cropped_coord_grid(quant.device, 
-                                            self.dist_shift, 
-                                            quant.shape[0], 
-                                            x_size, 
-                                            self.crop_res, 
-                                            scale,
-                                            det=det)
-
-        # # feature sampling
-        feat = stationary_noise(cgs, quant, scale=scale)  
+        cgs = self.shift_scale * expansion * get_position([res, res], 2, quant.device, quant.shape[0])
+        # feature sampling
+        layer_i = 3
+        quant_z = self.first_stage_model.decode_at_layer(quant, layer_i)
+        feat = stationary_noise(cgs, quant_z, scale=scale)  
         fourier = positional_encoding(cgs)
         feat = torch.cat([fourier, feat], 1)
-        dec = self.mlp(quant)
-        return dec, shift
-
+        dec = self.mlp(feat)
+        return dec
 
     def decode_with_shift(self, quant, x_size, det=False):
         # prepare input coordinates
@@ -249,7 +241,7 @@ class ImplicitDecoder(pl.LightningModule):
         feat = stationary_noise(cgs, quant, scale=scale)  
         fourier = positional_encoding(cgs)
         feat = torch.cat([fourier, feat], 1)
-        dec = self.mlp(quant)
+        dec = self.mlp(feat)
         return dec, shift
 
     def forward(self, x):

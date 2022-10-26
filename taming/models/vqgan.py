@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from main import instantiate_from_config
 
-from taming.modules.diffusionmodules.model import Encoder, Decoder
+from taming.modules.diffusionmodules.model import Encoder, Decoder, RestrictedDecoder
 from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 from taming.modules.vqvae.quantize import GumbelQuantize
 from taming.modules.vqvae.quantize import EMAVectorQuantizer
@@ -29,6 +29,7 @@ class VQModel(pl.LightningModule):
                  ckpt_path=None,
                  ignore_keys=[],
                  image_key="image",
+                 restriction=False,
                  colorize_nlabels=None,
                  monitor=None,
                  remap=None,
@@ -36,8 +37,9 @@ class VQModel(pl.LightningModule):
                  ):
         super().__init__()
         self.image_key = image_key
+        decoder_model = RestrictedDecoder if restriction else Decoder
         self.encoder = Encoder(**ddconfig)
-        self.decoder = Decoder(**ddconfig)
+        self.decoder = decoder_model(**ddconfig)
         self.loss = instantiate_from_config(lossconfig)
         self.quantize = VectorQuantizer(n_embed, embed_dim, beta=0.25,
                                         remap=remap, sane_index_shape=sane_index_shape)

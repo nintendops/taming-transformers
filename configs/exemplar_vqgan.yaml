@@ -2,9 +2,8 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.vqgan.VQModel
   params:
-    ckpt_path: logs/coco.ckpt
     embed_dim: 256
-    n_embed: 8192
+    n_embed: 512
     image_key: "image"
     ddconfig:
       padding_free: false
@@ -32,26 +31,13 @@ model:
         disc_start: 250001
         disc_weight: 0.8
         codebook_weight: 1.0
-# data:
-#   target: main.DataModuleFromConfig
-#   params:
-#     batch_size: 8
-#     train:
-#       target: taming.data.owt.OWTBase
-#       params:
-#         size: 272
-#         # dataroot: "/home/ICT2000/chenh/Datasets/Catalina"
-#         # dataroot: "/vgldb1/OWT/07-10-2020/RealData/ZhengHouse/OutputImageSegmentation/images/"
-#         dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
-#         crop_size: 256
 data:
   target: main.DataModuleFromConfig
   params:
     batch_size: 8
     train:
-      target: taming.data.owt.OWTMulti
+      target: taming.data.exemplar.ImageFolder
       params:
-        size: 272
-        dataroot: "/home/ICT2000/chenh/Datasets/owt.txt"
-        multiplier: 1
-        crop_size: 256
+        size: 368
+        dataroot: "/home/ICT2000/chenh/Datasets/paisley"
+        crop_size: 128

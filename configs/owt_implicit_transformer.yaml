@@ -18,8 +18,8 @@ model:
         attn_pdrop: 0.1
     implicit_stage_config:
         target: taming.models.impgan.ImplicitDecoder
-        ckpt_path: logs/2022-10-05T06-46-01_owt_mlp_256/checkpoints/last.ckpt
         params:
+          ckpt_path: logs/2022-10-05T06-46-01_owt_mlp_256/checkpoints/last.ckpt
           ddconfig:
             padding_free: true
             double_z: false
@@ -67,6 +67,10 @@ model:
                 dropout: 0.0
               lossconfig:
                 target: taming.modules.losses.DummyLoss
+          crop_res: 256
+          lossconfig:
+            target: taming.modules.losses.DummyLoss
+            
     cond_stage_config:
       target: taming.models.vqgan.VQSegmentationModel
       params:
