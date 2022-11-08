@@ -551,8 +551,8 @@ class RestrictedDecoder(nn.Module):
         self.mapping = MappingLayer(
             c_in = z_channels,
             c_out = block_in,
-            chs = [block_in]*5,
-            kernel_size = 5
+            chs = [block_in]*10,
+            kernel_size = 3
         )
 
         # upsampling

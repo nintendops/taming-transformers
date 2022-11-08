@@ -1,7 +1,35 @@
+import math
+import warnings
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+try:
+    symbolic_assert = torch._assert # 1.80a0
+except AttributeError:
+    symbolic_assert = torch.Assert # 1.70
+
+# Context manager to suppress known warnings in torch.jittrace()
+class suppress_tracer_warnings(warnings.catch_warnings):
+    def __enter__(self):
+        super().__enter__()
+        warnings.simplefilter("ignore", category=torch.jit.TracerWarning)
+        return self
+
+def assert_shape(tensor, ref_shape):
+    if tensor.ndim != len(ref_shape):
+        raise AssertionError(f"Wrong number of dimensions: got {tensor.ndim}, expected {len(ref_shape)}")
+    for idx, (size, ref_size) in enumerate(zip(tensor.shape, ref_shape)):
+        if ref_size is None:
+            pass
+        elif isinstance(ref_size, torch.Tensor):
+            with suppress_tracer_warnings(): # as_tensor results are registered as constants
+                symbolic_assert(torch.equal(torch.as_tensor(size), ref_size), f"Wrong size for dimension {idx}")
+        elif isinstance(size, torch.Tensor):
+            with suppress_tracer_warnings(): # as_tensor results are registered as constants
+                symbolic_assert(torch.equal(size, torch.as_tensor(ref_size)), f"Wrong size for dimension {idx}: expected {ref_size}")
+        elif size != ref_size:
+            raise AssertionError(f"Wrong size for dimension {idx}: got {size}, expected {ref_size}")
 
 # Flatten all dimensions of a tensor except the fist/last one
 def to_2d(x, mode):
@@ -12,17 +40,21 @@ def to_2d(x, mode):
     else:
         return x.flatten(1) # x.reshape(x.shape[0], element_dim(x))
 
-
 # Transpose tensor to scores
 def transpose_for_scores(x, num_heads, elem_num, head_size):
     x = x.reshape(-1, elem_num, num_heads, head_size) # [B, N, H, S]
     x = x.permute(0, 2, 1, 3) # [B, H, N, S]
     return x
 
+# Perform dropout
+def dropout(x, dp_func, noise_shape = None):
+    noise_shape = noise_shape or x.shape
+    return dp_func(torch.ones(noise_shape, device = x.device)) * x
+
 # Compute attention probabilities: perform softmax on att_scores and dropout
-def compute_probs(scores, dp_func):
+def compute_probs(scores, dp_func, temperature=0.1):
     # Compute attention probabilities
-    probs = F.softmax(scores, dim = -1) # [B, N, F, T]
+    probs = F.softmax(scores/temperature, dim = -1) # [B, N, F, T]
     shape = [int(d) for d in probs.shape]
     shape[-2] = 1
     # Dropout over random cells and over random full rows (randomly don't use a 'to' element)
@@ -63,36 +95,37 @@ class GateAttention(torch.nn.Module):
 class Transformer(torch.nn.Module):
     def __init__(self,
             dim,                                    # The layer dimension
-            pos_dim,                                # Positional encoding dimension
-            from_len,           to_len,             # The from/to tensors length (must be specified if from/to has 2 dims)
+            pos_dim,                                # Positional encoding dimension e,g, 2
+            from_len,           to_len,             # The from/to tensors length (must be specified if from/to has 2 dims) 
             from_dim,           to_dim,             # The from/to tensors dimensions
             from_gate = False,  to_gate = False,    # Add sigmoid gate on from/to, so that info may not be sent/received
                                                     # when gate is low (i.e. the attention probs may not sum to 1)
             # Additional options
             num_heads           = 1,                # Number of attention heads
             attention_dropout   = 0.12,             # Attention dropout rate
+            temperature         = 1e-1,
             integration         = "none",            # Feature integration type: additive, multiplicative or both
             norm                = None,             # Feature normalization type (optional): instance, batch or layer
             **_kwargs):                             # Ignore unrecognized keyword args
 
         super().__init__()
-        self.dim = dim
-        self.pos_dim = pos_dim
-        self.from_len = from_len
-        self.to_len = to_len
-        self.from_dim = from_dim
-        self.to_dim = to_dim
-        
-        self.num_heads = num_heads
-        self.size_head = int(dim / num_heads)
+        self.dim = dim   # e.g. 256
+        self.pos_dim = pos_dim # e.g. 2
+        self.from_len = from_len # e.g. 16x16
+        self.to_len = to_len # e.g. n_embed
+        self.from_dim = from_dim # e.g. 256
+        self.to_dim = to_dim # e.g. 256
+        self.temperature = temperature
+
+        self.num_heads = num_heads  # e.g. 1
+        self.size_head = int(dim / num_heads) # e.g. 256
 
         # We divide by 2 since we apply the dropout layer twice, over elements and over columns
         self.att_dp = torch.nn.Dropout(p = attention_dropout / 2) 
 
         self.norm = norm
         self.integration = integration        
-        self.centroid_dim = 2 * self.size_head
-
+        
         # Query, Key and Value mappings
         self.to_queries = nn.Linear(from_dim, dim)
         self.to_keys    = nn.Linear(to_dim, dim)
@@ -109,7 +142,7 @@ class Transformer(torch.nn.Module):
         self.to_gate_attention   = GateAttention(to_gate, dim, pos_dim, num_heads, from_len = 1, to_len = to_len)
         self.from_gate_attention = GateAttention(from_gate, dim, pos_dim, num_heads, from_len = from_len, to_len = 1, gate_bias = 1)
 
-        # Features Integration
+        # Features Integration (not used here)
         control_dim = (2 * self.dim) if self.integration == "both" else self.dim 
         self.modulation = nn.Linear(self.dim, control_dim)
 
@@ -121,21 +154,21 @@ class Transformer(torch.nn.Module):
         t_dim = getattr(self, f"{name}_dim")
 
         # from/to_tensor should be either 2 or 3 dimensions. If it's 3, then t_len should be specified.
-        if len(shape) > 3:
-            misc.error(f"Transformer {name}_tensor has {shape} shape. should be up to 3 dims.")
-        elif len(shape) == 3:
-            torch_misc.assert_shape(t, [None, t_len, t_dim])
+
+        assert len(shape) <= 3
+        if len(shape) == 3:
+            assert_shape(t, [None, t_len, t_dim])
             batch_size = shape[0]
         else:
             # Infer batch size for the 2-dims case
-            torch_misc.assert_shape(t, [None, t_dim])
+            assert_shape(t, [None, t_dim])
             batch_size = int(shape[0] / t_len)
 
         # Reshape tensors to 2d
         t = to_2d(t, "last")
         if t_pos is not None:
             t_pos = to_2d(t_pos, "last")
-            torch_misc.assert_shape(t_pos, [t_len, self.pos_dim])
+            assert_shape(t_pos, [t_len, self.pos_dim])
             t_pos = t_pos.tile([batch_size, 1])
 
         return t, t_pos, shape
@@ -232,7 +265,7 @@ class Transformer(torch.nn.Module):
             att_scores = logits_mask(att_scores, att_mask.unsqueeze(1))
 
         # Turn attention logits to probabilities (softmax + dropout)
-        att_probs = compute_probs(att_scores, self.att_dp)
+        att_probs = compute_probs(att_scores, self.att_dp, temperature=self.temperature)
 
         # (optional) Gate attention values for the from/to elements
         att_probs = self.to_gate_attention(att_probs, to_tensor, to_pos)

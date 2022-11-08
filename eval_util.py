@@ -171,9 +171,9 @@ def eval_vqgan(*, data, idx, model, opt, config, save_path, **ignorekwargs):
    
     # encoding
     x = tensify(image, torch.device('cuda'))
-    quant, _, info = model.encode(x)
-    quant = model.post_quant_conv(quant)
-    
+    quant, probs, info = model.encode(x)
+    import ipdb; ipdb.set_trace()
+
     #  quant shape: B, C, H, W
     B, C, H, W = quant.shape
     _, _, HH, WW = x.shape
@@ -182,7 +182,8 @@ def eval_vqgan(*, data, idx, model, opt, config, save_path, **ignorekwargs):
     if split_generate:
         split_factor = 2
         target_image = np.zeros([HH, WW, 3], dtype=np.float32)
-        quant_mapped = model.decoder._map(quant)
+        _quant = model.post_quant_conv(quant)
+        quant_mapped = model.decoder._map(_quant)
         for i in range(0, H, H//split_factor):
             for j in range(0, W, W//split_factor):
                 patch_quant = quant_mapped[:,:,i:i+H//split_factor, j:j+W//split_factor]
@@ -191,7 +192,7 @@ def eval_vqgan(*, data, idx, model, opt, config, save_path, **ignorekwargs):
         write_images(os.path.join(save_path, f'{idx}_split_image.png'), np.clip(target_image, -1.0, 1.0))
 
     # decode without splitting code map anyway
-    recon = tensor_to_numpy(model.decoder._generate(model.decoder._map(quant)))
+    recon = tensor_to_numpy(model.decode(quant))
     # recon = tensor_to_numpy(model.decode(quant))
     write_images(os.path.join(save_path, f'{idx}_recon_image.png'), np.clip(recon, -1.0, 1.0))
     return 

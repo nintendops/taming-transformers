@@ -33,7 +33,7 @@ def get_parser(**parser_kwargs):
         "-m",
         "--mode",
         type=str,
-        default="transformer",
+        default="vqgan",
         help="vqgan | transformer",
     )
     parser.add_argument(

@@ -323,9 +323,9 @@ class Net2NetTransformer(pl.LightningModule):
         if N is not None:
             x = x[:N]
             c = c[:N]
-
         return x, c
 
+    # loss function defined here
     def shared_step(self, batch, batch_idx):
         x, c = self.get_xc(batch)
         logits, target = self(x, c)

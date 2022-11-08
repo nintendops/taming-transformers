@@ -19,7 +19,7 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/2022-08-12T07-21-07_usc_512_pfvqgan/checkpoints/last.ckpt
+        ckpt_path: /data/Haiwei/taming_ckpts/2022-08-12T07-21-07_usc_512_pfvqgan/checkpoints/last.ckpt
         embed_dim: 256
         n_embed: 8192
         ddconfig:
@@ -45,7 +45,7 @@ model:
     cond_stage_config:
       target: taming.models.vqgan.VQSegmentationModel
       params:
-        ckpt_path: logs/2022-08-10T02-20-22_usc_512_pfvqgan_cond/checkpoints/last.ckpt
+        ckpt_path: /data/Haiwei/taming_ckpts/2022-08-10T02-20-22_usc_512_pfvqgan_cond/checkpoints/last.ckpt
         embed_dim: 128
         n_embed: 1024
         image_key: "segmentation"
