@@ -93,7 +93,9 @@ class ATTVQModel(pl.LightningModule):
         quant = to_4d(quant, image_dim)
         return quant, att_probs, None
 
-    def decode(self, quant):
+    def decode(self, quant, cast_to_4d=False):
+        if cast_to_4d or len(quant.shape) == 3:
+            quant = to_4d(quant)
         quant = self.post_quant_conv(quant)
         dec, _ = self.decoder(quant)
         return dec
@@ -107,6 +109,11 @@ class ATTVQModel(pl.LightningModule):
         quant_b = self.quantize.embed_code(code_b)
         dec = self.decode(quant_b)
         return dec
+
+    def query(self, probs):
+        probs = probs.unsqueeze(1) # assuming n_heads = 1
+        quant = self.transformer.query(self.embeddings.weight, probs)
+        return quant
 
     def forward(self, input):
         quant, probs, _ = self.encode(input)

@@ -222,10 +222,10 @@ class Transformer(torch.nn.Module):
             att_vars = None, att_mask = None, hw_shape = None):
 
         '''
-        N: number of attention heads
-        H: number of channels
-        T: number of embeddings
-        F: number of image codes
+        N: number of attention heads (default: 1)
+        H: number of channels (default: 512)
+        T: number of embeddings (codebook size)
+        F: number of image codes (e.g. 16x16)
         '''
 
         # Validate input shapes and map them to 2d
@@ -272,7 +272,7 @@ class Transformer(torch.nn.Module):
         att_probs = self.from_gate_attention(att_probs, from_tensor, from_pos)
 
         # Compute weighted-sum of the values using the attention distribution
-        control = att_probs.matmul(values)      # [B, N, F, H]
+        control = att_probs.matmul(values)      # [B, N, F, T] x [B, N, T, H] -> [B, N, F, H]
 
         if self.integration != 'none':
             control = control.permute(0, 2, 1, 3)   # [B, F, N, H]
@@ -291,3 +291,11 @@ class Transformer(torch.nn.Module):
             att_probs = att_probs.reshape(-1, *hw_shape, self.to_len).permute(0, 3, 1, 2) # [NCHW]
 
         return from_tensor, att_probs
+
+    @torch.no_grad()
+    def query(self, x, att_probs):
+        # for inference only, L = F denoting the length of input code sequences
+        values  = self.to_values(x) 
+        y = att_probs.matmul(values).mean(1) # [B, N, L, T] x [B, N, T, H] -> [B, N, L, H]
+        y = self.to_from_tensor(y) # [B, L, H]
+        return y

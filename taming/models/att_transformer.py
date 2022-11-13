@@ -25,6 +25,7 @@ class AttTransformer(Net2NetTransformer):
         
         # one step to produce the logits
         quant, z_probs = self.encode_to_z(x.float())
+
         # _, c_indices = self.encode_to_c(c.float())
         quant = self.prepare_input(quant) # B, L, C
         if self.training and self.pkeep < 1.0:
@@ -74,40 +75,44 @@ class AttTransformer(Net2NetTransformer):
         x = x.to(device=self.device).float()
         c = c.to(device=self.device).float()
 
-        quant_z, z_indices = self.encode_to_z(x)
-        quant_c, c_indices = self.encode_to_c(c)
+        quant, z_probs = self.encode_to_z(x.float())
+        # quant_c, c_indices = self.encode_to_c(c)
+        quant = self.prepare_input(quant) # B, L, C
 
         # create a "half"" sample
-        z_start_indices = z_indices[:,:z_indices.shape[1]//2]
-        index_sample = self.sample(z_start_indices, c_indices,
-                                   steps=z_indices.shape[1]-z_start_indices.shape[1],
+        L = z_probs.shape[1]
+        z_start = quant[:,:L[1]//2]
+        # z_start_probs = z_probs[:,:L[1]//2]
+
+        new_z = self.sample(z_start, None,
+                                   steps=L-z_start.shape[1],
                                    temperature=temperature if temperature is not None else 1.0,
                                    sample=True,
                                    top_k=top_k if top_k is not None else 100,
                                    callback=callback if callback is not None else lambda k: None)
 
-        x_sample = self.decode_to_img(index_sample, quant_z.shape)
+        x_sample = self.decode_to_img(new_z)
 
         # sample
-        z_start_indices = z_indices[:, :0]
-        index_sample = self.sample(z_start_indices, c_indices,
-                                   steps=z_indices.shape[1],
+        z_start = quant[:, :0]
+        new_z = self.sample(z_start, None,
+                                   steps=quant.shape[1],
                                    temperature=temperature if temperature is not None else 1.0,
                                    sample=True,
                                    top_k=top_k if top_k is not None else 100,
                                    callback=callback if callback is not None else lambda k: None)
-        x_sample_nopix = self.decode_to_img(index_sample, quant_z.shape)
+        x_sample_nopix = self.decode_to_img(new_z)
 
-        # det sample
-        z_start_indices = z_indices[:, :0]
-        index_sample = self.sample(z_start_indices, c_indices,
-                                   steps=z_indices.shape[1],
-                                   sample=False,
-                                   callback=callback if callback is not None else lambda k: None)
-        x_sample_det = self.decode_to_img(index_sample, quant_z.shape)
+        # # det sample
+        # z_start = quant[:, :0]
+        # new_z = self.sample(z_start, None,
+        #                            steps=quant.shape[1],
+        #                            sample=False,
+        #                            callback=callback if callback is not None else lambda k: None)
+        # x_sample_det = self.decode_to_img(index_sample)
 
         # reconstruction
-        x_rec = self.decode_to_img(z_indices, quant_z.shape)
+        x_rec = self.decode_to_img(quant)
 
         log["inputs"] = x
         log["reconstructions"] = x_rec
@@ -148,55 +153,53 @@ class AttTransformer(Net2NetTransformer):
 
 
     @torch.no_grad()
-    def decode_to_img(self, index, zshape, use_softmax=False):
-        index = self.permuter(index, reverse=True)
-        bhwc = (zshape[0],zshape[2],zshape[3],zshape[1])
-        quant_z = self.first_stage_model.quantize.get_codebook_entry(
-            index.reshape(-1), shape=bhwc)
-        x = self.first_stage_model.decode(quant_z)
+    def decode_to_img(self, z, use_softmax=False):
+        x = self.first_stage_model.decode(z)
         if use_softmax or self.first_stage_key != 'image':
             x = F.softmax(x, dim=1)
         return x
 
-
+    # ignore c for now
     @torch.no_grad()
     def sample(self, x, c, steps, temperature=1.0, sample=False, top_k=None,
                callback=lambda k: None):
+        # x: encoded features of shape B, L, C 
+
         block_size = self.transformer.get_block_size()
         assert not self.transformer.training
-        if self.pkeep <= 0.0:
-            # one pass suffices since input is pure noise anyway
-            assert len(x.shape)==2
-            noise_shape = (x.shape[0], steps-1)
-            #noise = torch.randint(self.transformer.config.vocab_size, noise_shape).to(x)
-            if self.use_condGPT:
-                noise = c.clone()[:,:-1]
-                x = torch.cat((x,noise),dim=1)
-                logits, _ = self.transformer(x, c)
-            else:
-                noise = c.clone()[:,x.shape[1]-c.shape[1]:-1]
-                x = torch.cat((x,noise),dim=1)
-                logits, _ = self.transformer(x)
 
-            # take all logits for now and scale by temp
-            logits = logits / temperature
-            # optionally crop probabilities to only the top k options
-            if top_k is not None:
-                logits = self.top_k_logits(logits, top_k)
-            # apply softmax to convert to probabilities
-            probs = F.softmax(logits, dim=-1)
-            # sample from the distribution or take the most likely
-            if sample:
-                shape = probs.shape
-                probs = probs.reshape(shape[0]*shape[1],shape[2])
-                ix = torch.multinomial(probs, num_samples=1)
-                probs = probs.reshape(shape[0],shape[1],shape[2])
-                ix = ix.reshape(shape[0],shape[1])
-            else:
-                _, ix = torch.topk(probs, k=1, dim=-1)
-            # cut off conditioning
-            if not self.use_condGPT:
-                x = ix[:, c.shape[1]-1:]
+        if self.pkeep <= 0.0:
+            # TODO: THIS PART IS NOT YET IMPLEMENTED
+            # # one pass suffices since input is pure noise anyway
+            # assert len(x.shape)==2
+            # noise_shape = (x.shape[0], steps-1)
+
+            # #noise = torch.randint(self.transformer.config.vocab_size, noise_shape).to(x)
+            # noise = c.clone()[:,x.shape[1]-c.shape[1]:-1]
+            # x = torch.cat((x,noise),dim=1)
+            # logits, _ = self.transformer(x)
+
+            # # take all logits for now and scale by temp
+            # logits = logits / temperature
+            # # optionally crop probabilities to only the top k options
+            # if top_k is not None:
+            #     logits = self.top_k_logits(logits, top_k)
+            # # apply softmax to convert to probabilities
+            # probs = F.softmax(logits, dim=-1)
+            # # sample from the distribution or take the most likely
+
+            # if sample:
+            #     shape = probs.shape
+            #     probs = probs.reshape(shape[0]*shape[1],shape[2])
+            #     ix = torch.multinomial(probs, num_samples=1)
+            #     probs = probs.reshape(shape[0],shape[1],shape[2])
+            #     ix = ix.reshape(shape[0],shape[1])
+            # else:
+            #     _, ix = torch.topk(probs, k=1, dim=-1)
+            # # cut off conditioning
+            # if not self.use_condGPT:
+            #     x = ix[:, c.shape[1]-1:]
+            pass
 
         for k in range(steps):
             callback(k)
@@ -206,21 +209,28 @@ class AttTransformer(Net2NetTransformer):
 
             # pluck the logits at the final step and scale by temperature
             logits = logits[:, -1, :] / temperature
+
             # optionally crop probabilities to only the top k options
             if top_k is not None:
                 logits = self.top_k_logits(logits, top_k)
+
             # apply softmax to convert to probabilities
-            probs = F.softmax(logits, dim=-1)
-            # sample from the distribution or take the most likely
-            if sample:
-                ix = torch.multinomial(probs, num_samples=1)
-            else:
-                _, ix = torch.topk(probs, k=1, dim=-1)
+            probs = F.softmax(logits, dim=-1) # assert to be of shape B, 1, T (L=1 here)
+
+            # compute appended features given the inferred attention weights 
+            '''
+            TODO: this process is deterministic, which prevents us from being able to sample
+            '''
+            ix = self.first_stage_model.query(probs.unsqueeze(1)) # B, 1, H
+
+            # TODO: sample from the distribution or take the most likely
+            # if sample:
+            #     ix = torch.multinomial(probs, num_samples=1)
+            # else:
+            #     _, ix = torch.topk(probs, k=1, dim=-1)
+
             # append to the sequence and continue
             x = torch.cat((x, ix), dim=1)
-        # cut off conditioning
-        if not self.use_condGPT:
-            x = x[:, c.shape[1]:]
 
         return x
 
