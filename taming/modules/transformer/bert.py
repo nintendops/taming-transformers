@@ -62,6 +62,8 @@ def compute_probs(scores, dp_func, temperature=0.1):
     probs = dropout(probs, dp_func, shape)
     return probs
 
+def entropy_loss(probs):
+    return torch.mean(-torch.sum(probs * torch.log(probs + 1e-7),-1))
 
 # (Optional, only used when --ltnt-gate, --img-gate)
 #
@@ -106,6 +108,8 @@ class Transformer(torch.nn.Module):
             temperature         = 1e-1,
             integration         = "none",            # Feature integration type: additive, multiplicative or both
             norm                = None,             # Feature normalization type (optional): instance, batch or layer
+            use_topk            = False,
+            finetune            = False,
             **_kwargs):                             # Ignore unrecognized keyword args
 
         super().__init__()
@@ -116,6 +120,8 @@ class Transformer(torch.nn.Module):
         self.from_dim = from_dim # e.g. 256
         self.to_dim = to_dim # e.g. 256
         self.temperature = temperature
+        self.use_topk = use_topk
+        self.finetune = finetune
 
         self.num_heads = num_heads  # e.g. 1
         self.size_head = int(dim / num_heads) # e.g. 256
@@ -146,6 +152,13 @@ class Transformer(torch.nn.Module):
         control_dim = (2 * self.dim) if self.integration == "both" else self.dim 
         self.modulation = nn.Linear(self.dim, control_dim)
 
+    def freeze(self):
+        if self.finetune:
+            self.to_queries.eval()
+            for param in self.to_queries.parameters():
+                param.requires_grad = False
+        else:
+            return
 
     # Validate transformer input shape for from/to_tensor and reshape to 2d
     def process_input(self, t, t_pos, name):
@@ -219,14 +232,16 @@ class Transformer(torch.nn.Module):
     # - att_vars: K-means variables carried over from layer to layer (only when --kmeans)
     # - att_mask: Attention mask to block from/to elements [batch_size, from_len, to_len]
     def forward(self, from_tensor, to_tensor, from_pos, to_pos, 
-            att_vars = None, att_mask = None, hw_shape = None):
+            att_vars = None, att_mask = None, hw_shape = None, use_topk = False):
 
         '''
         N: number of attention heads (default: 1)
         H: number of channels (default: 512)
-        T: number of embeddings (codebook size)
-        F: number of image codes (e.g. 16x16)
+        T: number of embeddings (codebook size, e.g. 1024)
+        F: number of image codes (default: 16x16=256)
         '''
+
+        self.freeze()
 
         # Validate input shapes and map them to 2d
         from_tensor, from_pos, from_shape = self.process_input(from_tensor, from_pos, "from") # from_tensor: image latents
@@ -239,7 +254,7 @@ class Transformer(torch.nn.Module):
         queries = self.to_queries(from_tensor)
         keys    = self.to_keys(to_tensor)
         values  = self.to_values(to_tensor)
-        _queries = queries
+        # _queries = queries
 
         # Add positional encodings to queries and keys
         if from_pos is not None:
@@ -252,8 +267,21 @@ class Transformer(torch.nn.Module):
         queries = transpose_for_scores(queries, self.num_heads, self.from_len, self.size_head)  # [B, N, F, H]
         keys = transpose_for_scores(keys,    self.num_heads, self.to_len,   self.size_head)  # [B, N, T, H]
 
+        # l2 normalization
+        keys = nn.functional.normalize(keys, dim=-1)
+        queries = nn.functional.normalize(queries, dim=-1)      
+
         # correlation tensor
         att_scores = queries.matmul(keys.permute(0, 1, 3, 2)) # [B, N, F, T]
+
+        # q loss as cosine simularity
+        qloss = torch.mean(1 - att_scores.max(-1)[0])
+        # qloss = 0.0
+      
+        # print(qloss)
+        # print(queries.squeeze() @ queries.squeeze().T)
+        # import ipdb; ipdb.set_trace()
+
         att_probs = None
 
         # Scale attention scores given head size (see BERT)
@@ -265,14 +293,23 @@ class Transformer(torch.nn.Module):
             att_scores = logits_mask(att_scores, att_mask.unsqueeze(1))
 
         # Turn attention logits to probabilities (softmax + dropout)
-        att_probs = compute_probs(att_scores, self.att_dp, temperature=self.temperature)
+        att_probs = compute_probs(att_scores, self.att_dp, temperature=self.temperature) # [B, N, F, T]
 
         # (optional) Gate attention values for the from/to elements
         att_probs = self.to_gate_attention(att_probs, to_tensor, to_pos)
         att_probs = self.from_gate_attention(att_probs, from_tensor, from_pos)
 
-        # Compute weighted-sum of the values using the attention distribution
-        control = att_probs.matmul(values)      # [B, N, F, T] x [B, N, T, H] -> [B, N, F, H]
+        # topk quantization
+        if use_topk or self.use_topk:
+            _, top = torch.topk(att_probs, k=1, dim=-1)
+            B, N, F, _ = top.shape
+            T, H = values.shape[-2:]
+            top_ = top.reshape(-1)
+            values_ = values.reshape(T,H)
+            control = values_[top_].reshape(B, N, F, H)
+        else:
+            # Compute weighted-sum of the values using the attention distribution
+            control = att_probs.matmul(values)      # [B, N, F, T] x [B, N, T, H] -> [B, N, F, H]
 
         if self.integration != 'none':
             control = control.permute(0, 2, 1, 3)   # [B, F, N, H]
@@ -290,7 +327,12 @@ class Transformer(torch.nn.Module):
         if hw_shape is not None:
             att_probs = att_probs.reshape(-1, *hw_shape, self.to_len).permute(0, 3, 1, 2) # [NCHW]
 
-        return from_tensor, att_probs
+        # qloss = entropy_loss(att_probs)
+
+        if use_topk or self.use_topk:
+            att_probs = top
+
+        return from_tensor, att_probs, qloss
 
     @torch.no_grad()
     def query(self, x, att_probs):

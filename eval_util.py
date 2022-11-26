@@ -172,7 +172,6 @@ def eval_vqgan(*, data, idx, model, opt, config, save_path, **ignorekwargs):
     # encoding
     x = tensify(image, torch.device('cuda'))
     quant, probs, info = model.encode(x)
-    import ipdb; ipdb.set_trace()
 
     #  quant shape: B, C, H, W
     B, C, H, W = quant.shape
@@ -196,6 +195,46 @@ def eval_vqgan(*, data, idx, model, opt, config, save_path, **ignorekwargs):
     # recon = tensor_to_numpy(model.decode(quant))
     write_images(os.path.join(save_path, f'{idx}_recon_image.png'), np.clip(recon, -1.0, 1.0))
     return 
+
+
+def eval_attgan(*, data, idx, model, opt, config, save_path, **ignorekwargs):
+    split_generate = opt.split
+    # ---------------------- first log the input data -----------------------------
+    image = data['image']
+    write_images(os.path.join(save_path, f'{idx}_gt_image.png'), image)
+    # -----------------------------------------------------------------------------
+   
+    # encoding
+    x = tensify(image, torch.device('cuda'))
+    quant, probs, info = model.encode(x)
+
+    #  quant shape: B, C, H, W
+    B, C, H, W = quant.shape
+    _, _, HH, WW = x.shape
+    s = HH // H
+
+    if split_generate:
+        split_factor = 2
+        target_image = np.zeros([HH, WW, 3], dtype=np.float32)
+        _quant = model.post_quant_conv(quant)
+        quant_mapped = model.decoder._map(_quant)
+        for i in range(0, H, H//split_factor):
+            for j in range(0, W, W//split_factor):
+                patch_quant = quant_mapped[:,:,i:i+H//split_factor, j:j+W//split_factor]
+                patch_recon = tensor_to_numpy(model.decoder._generate(patch_quant))
+                target_image[s*i:s*i+s*H//split_factor, s*j:s*j+s*W//split_factor] = patch_recon
+        write_images(os.path.join(save_path, f'{idx}_split_image.png'), np.clip(target_image, -1.0, 1.0))
+
+    # decode without splitting code map anyway
+    recon = tensor_to_numpy(model.decode(quant))
+    write_images(os.path.join(save_path, f'{idx}_recon_image.png'), np.clip(recon, -1.0, 1.0))
+
+    quant, probs, info = model.encode(x, use_topk=True)
+    recon_topk = tensor_to_numpy(model.decode(quant))
+    write_images(os.path.join(save_path, f'{idx}_recon_quant_image.png'), np.clip(recon_topk, -1.0, 1.0))
+
+    return 
+
 
 def eval_mult(*, data, idx, model, opt, config, save_path, **ignorekwargs):
 

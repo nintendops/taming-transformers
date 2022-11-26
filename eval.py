@@ -33,8 +33,8 @@ def get_parser(**parser_kwargs):
         "-m",
         "--mode",
         type=str,
-        default="vqgan",
-        help="vqgan | transformer",
+        default="attgan",
+        help="vqgan | attgan | transformer",
     )
     parser.add_argument(
         "--base",
@@ -64,7 +64,7 @@ def get_parser(**parser_kwargs):
         "--split",
         type=str2bool,
         const=True,
-        default=True,
+        default=False,
         nargs="?",
     )
     parser.add_argument(
@@ -128,6 +128,8 @@ if __name__ == '__main__':
         eval_method = functools.partial(eval_mult, model=model, opt=opt, config=config, save_path=save_path)
     elif opt.mode == 'vqgan':
         eval_method = functools.partial(eval_vqgan, model=model, opt=opt, config=config, save_path=save_path)
+    elif opt.mode == 'attgan':
+        eval_method = functools.partial(eval_attgan, model=model, opt=opt, config=config, save_path=save_path)
     else:
         print(f"No mode found for {opt.mode}!")
         exit()

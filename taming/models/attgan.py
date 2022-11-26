@@ -29,6 +29,7 @@ def to_4d(tensor, image_dim=None):
         image_dim = [int(L**0.5)] * 2
     return tensor.permute(0,2,1).reshape(B,C,*image_dim).contiguous()
 
+
 class ATTVQModel(pl.LightningModule):
     def __init__(self,
                  bertconfig,
@@ -36,6 +37,7 @@ class ATTVQModel(pl.LightningModule):
                  lossconfig,
                  n_embed,
                  embed_dim,
+                 finetune=False,
                  ckpt_path=None,
                  ignore_keys=[],
                  image_key="image",
@@ -55,7 +57,7 @@ class ATTVQModel(pl.LightningModule):
         self.embeddings = torch.nn.Embedding(n_embed, embed_dim)
 
         # BERT transformer with simplex attention
-        self.transformer = Transformer(**bertconfig)
+        self.transformer = Transformer(**bertconfig, finetune=finetune)
 
         # Perception loss only 
         self.loss = instantiate_from_config(lossconfig)
@@ -71,6 +73,12 @@ class ATTVQModel(pl.LightningModule):
         if monitor is not None:
             self.monitor = monitor
 
+        self.finetune = finetune
+        if self.finetune:
+            self.encoder.eval()
+            self.quant_conv.eval()
+
+
     def init_from_ckpt(self, path, ignore_keys=list()):
         sd = torch.load(path, map_location="cpu")["state_dict"]
         keys = list(sd.keys())
@@ -82,16 +90,17 @@ class ATTVQModel(pl.LightningModule):
         self.load_state_dict(sd, strict=False)
         print(f"Restored from {path}")
 
-    def encode(self, x):
+    def encode(self, x, use_topk=False):
         h = self.encoder(x)
         h = self.quant_conv(h)
         image_dim = h.shape[-2:]
-        quant, att_probs = self.transformer(from_tensor=to_2d(h),
+        quant, att_probs, qloss = self.transformer(from_tensor=to_2d(h),
                                             to_tensor=self.embeddings.weight,
                                             from_pos=None,
-                                            to_pos=None)
+                                            to_pos=None,
+                                            use_topk=use_topk)
         quant = to_4d(quant, image_dim)
-        return quant, att_probs, None
+        return quant, att_probs, qloss
 
     def decode(self, quant, cast_to_4d=False):
         if cast_to_4d or len(quant.shape) == 3:
@@ -116,9 +125,9 @@ class ATTVQModel(pl.LightningModule):
         return quant
 
     def forward(self, input):
-        quant, probs, _ = self.encode(input)
+        quant, probs, loss = self.encode(input)
         dec = self.decode(quant)
-        return dec, probs
+        return dec, probs, loss
 
     def get_input(self, batch, k):
         x = batch[k]
@@ -129,20 +138,23 @@ class ATTVQModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         x = self.get_input(batch, self.image_key)
-        xrec, probs = self(x)
+        xrec, probs, qloss = self(x)
+
+        # self.transformer.freeze()
 
         if optimizer_idx == 0:
             # autoencode
-            aeloss, log_dict_ae = self.loss(x, xrec, optimizer_idx, self.global_step,
+            aeloss, log_dict_ae = self.loss(qloss, x, xrec, optimizer_idx, self.global_step,
                                             last_layer=self.get_last_layer(), split="train")
 
+            self.log("train/qloss", qloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log("train/aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=True)
             return aeloss
 
         if optimizer_idx == 1:
             # discriminator
-            discloss, log_dict_disc = self.loss(x, xrec, optimizer_idx, self.global_step,
+            discloss, log_dict_disc = self.loss(qloss, x, xrec, optimizer_idx, self.global_step,
                                             last_layer=self.get_last_layer(), split="train")
             self.log("train/discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=True)
@@ -150,11 +162,11 @@ class ATTVQModel(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x = self.get_input(batch, self.image_key)
-        xrec, probs = self(x)
-        aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
+        xrec, probs, qloss = self(x)
+        aeloss, log_dict_ae = self.loss(qloss, x, xrec, 0, self.global_step,
                                             last_layer=self.get_last_layer(), split="val")
 
-        discloss, log_dict_disc = self.loss(x, xrec, 1, self.global_step,
+        discloss, log_dict_disc = self.loss(qloss, x, xrec, 1, self.global_step,
                                             last_layer=self.get_last_layer(), split="val")
         rec_loss = log_dict_ae["val/rec_loss"]
         self.log("val/rec_loss", rec_loss,
@@ -169,11 +181,11 @@ class ATTVQModel(pl.LightningModule):
         from PIL import Image
 
         x = self.get_input(batch, self.image_key)
-        xrec, probs = self(x)
-        aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
+        xrec, probs, qloss = self(x)
+        aeloss, log_dict_ae = self.loss(qloss, x, xrec, 0, self.global_step,
                                             last_layer=self.get_last_layer(), split="val")
 
-        discloss, log_dict_disc = self.loss(x, xrec, 1, self.global_step,
+        discloss, log_dict_disc = self.loss(qloss, x, xrec, 1, self.global_step,
                                             last_layer=self.get_last_layer(), split="val")
         rec_loss = log_dict_ae["val/rec_loss"]
         self.log("val/rec_loss", rec_loss,
@@ -196,13 +208,20 @@ class ATTVQModel(pl.LightningModule):
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        opt_ae = torch.optim.Adam(list(self.encoder.parameters())+
-                                  list(self.decoder.parameters())+
-                                  list(self.embeddings.parameters())+
-                                  list(self.transformer.parameters())+
-                                  list(self.quant_conv.parameters())+
-                                  list(self.post_quant_conv.parameters()),
-                                  lr=lr, betas=(0.5, 0.9))
+        if self.finetune:
+            opt_ae = torch.optim.Adam(list(self.decoder.parameters())+
+                                      list(self.embeddings.parameters())+
+                                      list(self.transformer.parameters())+
+                                      list(self.post_quant_conv.parameters()),
+                                      lr=lr, betas=(0.5, 0.9))
+        else:
+            opt_ae = torch.optim.Adam(list(self.encoder.parameters())+
+                                      list(self.decoder.parameters())+
+                                      list(self.embeddings.parameters())+
+                                      list(self.transformer.parameters())+
+                                      list(self.quant_conv.parameters())+
+                                      list(self.post_quant_conv.parameters()),
+                                      lr=lr, betas=(0.5, 0.9))
         opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(),
                                     lr=lr, betas=(0.5, 0.9))
         return [opt_ae, opt_disc], []
@@ -214,7 +233,7 @@ class ATTVQModel(pl.LightningModule):
         log = dict()
         x = self.get_input(batch, self.image_key)
         x = x.to(self.device)
-        xrec, _ = self(x)
+        xrec, _, _ = self(x)
         if x.shape[1] > 3:
             # colorize with random projection
             assert xrec.shape[1] > 3

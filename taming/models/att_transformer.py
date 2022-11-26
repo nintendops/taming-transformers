@@ -81,7 +81,7 @@ class AttTransformer(Net2NetTransformer):
 
         # create a "half"" sample
         L = z_probs.shape[1]
-        z_start = quant[:,:L[1]//2]
+        z_start = quant[:,:L//2]
         # z_start_probs = z_probs[:,:L[1]//2]
 
         new_z = self.sample(z_start, None,
@@ -94,9 +94,9 @@ class AttTransformer(Net2NetTransformer):
         x_sample = self.decode_to_img(new_z)
 
         # sample
-        z_start = quant[:, :0]
+        z_start = quant[:,:1]
         new_z = self.sample(z_start, None,
-                                   steps=quant.shape[1],
+                                   steps=L-1,
                                    temperature=temperature if temperature is not None else 1.0,
                                    sample=True,
                                    top_k=top_k if top_k is not None else 100,
@@ -110,6 +110,7 @@ class AttTransformer(Net2NetTransformer):
         #                            sample=False,
         #                            callback=callback if callback is not None else lambda k: None)
         # x_sample_det = self.decode_to_img(index_sample)
+        x_sample_det = x_sample_nopix
 
         # reconstruction
         x_rec = self.decode_to_img(quant)
@@ -233,7 +234,6 @@ class AttTransformer(Net2NetTransformer):
             x = torch.cat((x, ix), dim=1)
 
         return x
-
 
     # loss function defined here
     def shared_step(self, batch, batch_idx):
