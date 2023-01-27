@@ -6,7 +6,7 @@ model:
     transformer_config:
       target: taming.modules.transformer.mingpt.GPT
       params:
-        vocab_size: 8192
+        vocab_size: 1024
         block_size: 512  # = 256 + 256 = dim(vqgan_latent_space,16x16) 
         n_layer: 40 # 24,40
         n_head: 16
@@ -17,13 +17,13 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/2022-08-12T07-21-07_usc_512_pfvqgan/checkpoints/last.ckpt
-        embed_dim: 256
-        n_embed: 8192
+        ckpt_path: /data/Haiwei/taming_ckpts/2022-12-02T11-02-19_allusc_vqgan_1024_baseline_cont/checkpoints/last.ckpt
+        embed_dim: 512
+        n_embed: 1024
         ddconfig:
-          padding_free: true
+          padding_free: false
           double_z: false
-          z_channels: 256
+          z_channels: 512
           resolution: 256
           in_channels: 3
           out_ch: 3
@@ -44,12 +44,25 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 2
+    batch_size: 4
     train:
-      target: taming.data.owt.OWTBase
+      target: taming.data.owt.OWTMulti
       params:
-        size: 512
-        dataroot: "/home/ICT2000/chenh/Datasets/USC_Galen_Center"
+        size: 272
+        dataroot: /data/Haiwei/Datasets/owt.txt
+        multiplier: 1
         crop_size: 256
-        onehot_segmentation: true
+
+
+# data:
+#   target: main.DataModuleFromConfig
+#   params:
+#     batch_size: 2
+#     train:
+#       target: taming.data.owt.OWTBase
+#       params:
+#         size: 512
+#         dataroot: "/data/Haiwei/Datasets/USC/OutputImageSegmentation/images"
+#         crop_size: 256
+#         onehot_segmentation: true
 
