@@ -11,7 +11,7 @@ from PIL import Image
 DEBUG_MODE = False
 
 class OWTBase(Dataset):
-    def __init__(self, size=None, dataroot="", multiplier=20, onehot_segmentation=False, 
+    def __init__(self, size=None, dataroot="", multiplier=20, onehot_segmentation=False, ignore_segmentation=False,
                  crop_size=None, force_no_crop=False, given_files=None, multiscale_factor=1.0, extension='JPG', split='train'):
         self.ext = extension
         self.split = split # self.get_split()
@@ -24,7 +24,7 @@ class OWTBase(Dataset):
             self.crop_size = crop_size
         self.onehot = onehot_segmentation       # return segmentation as rgb or one hot
         self.dataroot = dataroot
-        self.ignore_segmentation = False
+        self.ignore_segmentation = ignore_segmentation
 
         self.initialize_paths()
         self.initialize_processor(force_no_crop)

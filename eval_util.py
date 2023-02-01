@@ -15,6 +15,7 @@ from taming.models.cond_transformer import Net2NetTransformer
 
 
 def write_images(path, image):
+    image = np.clip(image, -1, 1)
     image = ((image + 1) * 255 / 2).astype(np.uint8)
     if image.ndim == 3:
         if image.shape[2] == 3:
@@ -235,6 +236,73 @@ def eval_attgan(*, data, idx, model, opt, config, save_path, **ignorekwargs):
 
     return 
 
+def LowerHalfMask(s):
+    mask = np.ones((s, s), np.uint8)
+    mask[s//2:] = 0
+    return mask[..., np.newaxis].astype(np.float32)
+
+def eval_half(*, data, idx, model, opt, config, save_path, **ignorekwargs):
+    batch = data
+    image_idx = idx
+    transformer = model
+    n_sample = opt.sample 
+    split_generate = opt.split
+    
+    # ---------------------- first log the input data -----------------------------
+    image = batch['image']
+    unconditional = config.model.params.cond_stage_config == "__is_unconditional__"
+    if unconditional:
+        segmentation = image
+    else:
+        segmentation = batch['segmentation']
+        write_images(os.path.join(save_path, f'image_{image_idx}_segmentation.png'), segmentation)
+    write_images(os.path.join(save_path, f'image_{image_idx}_src.png'), image)
+    # -----------------------------------------------------------------------------
+
+    codebook_size = config.model.params.first_stage_config.params.embed_dim
+    nb = 1
+    res = 256
+    c_code_res = 16
+    
+    H, W, C = image.shape
+
+    # mask out half of the image before the encoding
+    mask = LowerHalfMask(H)
+    image = image * mask
+    write_images(os.path.join(save_path, f'image_{image_idx}_masked.png'), image)
+
+    # get the gt z_indices first
+    x = tensify(image, torch.device('cuda')) # B, C, H, W
+    _, z_indices = model.encode_to_z(x)
+
+    # # use conditional inpaiting in all cases?
+    # c = tensify(segmentation, torch.device('cuda'))
+    # _, c_indices = model.encode_to_c(c)
+
+    for i_sample in range(n_sample):
+        print(f"Generating samples for batch data {image_idx} at sample #{i_sample}")
+
+        # ---------------------- generate image code -----------------------------
+        z_indices = generate(transformer, 
+                             1, 
+                             codebook_size, 
+                             c_code_res,
+                             inpainting_multiplier=(0.5, 1), 
+                             gt_z_indices=z_indices, 
+                             c_indices=None)
+        # ------------------------------------------------------------------------
+
+        # ---------------------- decode code blocks into image ----------------------------- 
+        new_z_code_shape = [nb, codebook_size, c_code_res, c_code_res]
+        x_sample = transformer.decode_to_img(z_indices, new_z_code_shape).detach().cpu()
+        # x_sample = F.softmax(x_sample, dim=1)
+        target_image = x_sample[0].numpy().transpose(1,2,0)
+
+        # create grid image
+        write_images(os.path.join(save_path, f'image_{image_idx}_sample_{i_sample}_generate.png'), target_image)
+        # ---------------------------------------------------------------------------------
+
+
 
 def eval_mult(*, data, idx, model, opt, config, save_path, **ignorekwargs):
 
@@ -333,7 +401,14 @@ def eval_mult(*, data, idx, model, opt, config, save_path, **ignorekwargs):
         # write_images(os.path.join(save_path, f'image_{image_idx}_sample_{i_sample}_generate.png'), target_image)
         # ---------------------------------------------------------------------------------
 
-def generate(model, multiplier, codebook_size, res, image_res=256, gt_z_indices=None, c_indices=None):
+def generate(model, 
+             multiplier, 
+             codebook_size, 
+             res, 
+             inpainting_multiplier=(1,1), 
+             image_res=256, 
+             gt_z_indices=None, 
+             c_indices=None):
     '''
      generate a multiplied-scale scene with an arbitrary-sized random codebook
      each 16x16 code block is decoded into a 256x256 patch of pixels
@@ -346,6 +421,8 @@ def generate(model, multiplier, codebook_size, res, image_res=256, gt_z_indices=
     # multiplier = 4
     nx = res
     ny = res
+    i_nx = int(inpainting_multiplier[0] * nx)
+    i_ny = int(inpainting_multiplier[1] * ny)
     nnx = res * multiplier
     nny = res * multiplier
     nb = 1
@@ -365,8 +442,8 @@ def generate(model, multiplier, codebook_size, res, image_res=256, gt_z_indices=
     
     # (inpainting) partially fill the z_indices with known data
     if gt_z_indices is not None:
-        z_indices[:,:nx, :ny] = gt_z_indices.reshape(nb, nx, ny)
-        occupancy[:,:nx, :ny] = True
+        z_indices[:,:i_nx, :i_ny] = (gt_z_indices.reshape(nb, nx, ny))[:,:i_nx, :i_ny]
+        occupancy[:,:i_nx, :i_ny] = True
 
     # getting the dummy conditional code for unconditional generation
     if c_indices is None:

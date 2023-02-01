@@ -33,7 +33,7 @@ def get_parser(**parser_kwargs):
         "-m",
         "--mode",
         type=str,
-        default="attgan",
+        default="transformer_half",
         help="vqgan | attgan | transformer",
     )
     parser.add_argument(
@@ -50,15 +50,22 @@ def get_parser(**parser_kwargs):
         help="path to checkpoints",
     )
     parser.add_argument(
+        "-d",
+        "--datadir",
+        type=str,
+        default="",
+        help="path to datasets",
+    )
+    parser.add_argument(
         "--multiplier",
         type=float,
-        default=2.0,
+        default=1.0,
     )
     parser.add_argument(
         "-n",
         "--sample",
         type=int,
-        default=4,
+        default=2,
     )
     parser.add_argument(
         "--split",
@@ -121,19 +128,21 @@ if __name__ == '__main__':
     print("Done!")
     dataset = data.datasets['train']
     dataset_iter = iter(data._train_dataloader())
-
-    data_select = [5,13,16,20,23,26,7,8,9,10,11,12] # range(len(dataset))
+    data_select = range(len(dataset))
 
     if opt.mode == 'transformer':
-        eval_method = functools.partial(eval_mult, model=model, opt=opt, config=config, save_path=save_path)
+        eval_method = eval_mult
+    elif opt.mode == "transformer_half":
+        eval_method = eval_half      
     elif opt.mode == 'vqgan':
-        eval_method = functools.partial(eval_vqgan, model=model, opt=opt, config=config, save_path=save_path)
+        eval_method = eval_vqgan
     elif opt.mode == 'attgan':
-        eval_method = functools.partial(eval_attgan, model=model, opt=opt, config=config, save_path=save_path)
+        eval_method = eval_attgan
     else:
         print(f"No mode found for {opt.mode}!")
         exit()
 
+    eval_method = functools.partial(eval_method, model=model, opt=opt, config=config, save_path=save_path)
     with torch.no_grad():
         for i in data_select:
             batch_data = dataset[i]
