@@ -1,7 +1,7 @@
 model:
   disable_zero_padding: false
   base_learning_rate: 4.5e-06
-  target: taming.models.cond_transformer.Net2NetTransformer
+  target: taming.models.maskgit.Net2NetTransformer
   params:
     cond_stage_key: segmentation
     transformer_config:

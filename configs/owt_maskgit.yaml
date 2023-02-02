@@ -1,0 +1,68 @@
+model:
+  base_learning_rate: 4.5e-06
+  target: taming.models.maskgit.MaskGIT
+  params:
+    cond_stage_key: segmentation
+    transformer_config:
+      target: taming.modules.transformer.mingpt.GPT
+      params:
+        vocab_size: 1024
+        block_size: 512  # = 256 + 256 = dim(vqgan_latent_space,16x16) 
+        n_layer: 40 # 24,40
+        n_head: 16
+        n_embd: 1408
+        embd_pdrop: 0.1
+        resid_pdrop: 0.1
+        attn_pdrop: 0.1
+    first_stage_config:
+      target: taming.models.vqgan.VQModel
+      params:
+        ckpt_path: /data/Haiwei/taming_ckpts/2022-12-02T11-02-19_allusc_vqgan_1024_baseline_cont/checkpoints/last.ckpt
+        embed_dim: 512
+        n_embed: 1024
+        ddconfig:
+          padding_free: false
+          double_z: false
+          z_channels: 512
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 1
+          - 2
+          - 2
+          - 4
+          num_res_blocks: 2
+          attn_resolutions:
+          - 16
+          dropout: 0.0
+        lossconfig:
+          target: taming.modules.losses.DummyLoss
+    cond_stage_config: "__is_unconditional__"
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 4
+    train:
+      target: taming.data.owt.OWTMulti
+      params:
+        size: 272
+        dataroot: /data/Haiwei/Datasets/owt.txt
+        multiplier: 1
+        crop_size: 256
+
+
+# data:
+#   target: main.DataModuleFromConfig
+#   params:
+#     batch_size: 2
+#     train:
+#       target: taming.data.owt.OWTBase
+#       params:
+#         size: 512
+#         dataroot: "/data/Haiwei/Datasets/USC/OutputImageSegmentation/images"
+#         crop_size: 256
+#         onehot_segmentation: true
+

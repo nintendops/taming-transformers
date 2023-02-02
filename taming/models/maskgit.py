@@ -13,7 +13,7 @@ def disabled_train(self, mode=True):
     return self
 
 
-class Net2NetTransformer(pl.LightningModule):
+class MaskGIT(pl.LightningModule):
     def __init__(self,
                  transformer_config,
                  cond_stage_config,
@@ -25,13 +25,14 @@ class Net2NetTransformer(pl.LightningModule):
                  first_stage_key="image",
                  cond_stage_key="depth",
                  downsample_cond_size=-1,
-                 pkeep=1.0,
+                 pkeep=0.85,
                  sos_token=0,
                  unconditional=False,
                  ):
         super().__init__()
         self.be_unconditional = unconditional
         self.sos_token = sos_token
+        self.mask_token = -1 # this needs to be hard-coded due to embedding implementation in BERT
         self.first_stage_key = first_stage_key
         self.cond_stage_key = cond_stage_key
         self.init_cond_stage_from_ckpt(cond_stage_config)
@@ -57,18 +58,11 @@ class Net2NetTransformer(pl.LightningModule):
         print(f"Restored from {path}")
 
     def init_first_stage_from_ckpt(self, config, config_implicit):
-        if config_implicit is None:
-            model = instantiate_from_config(config)
-            model = model.eval()
-            model.train = disabled_train
-            self.mlp_model = None
-            self.first_stage_model = model
-        else:
-            model = instantiate_from_config(config_implicit)
-            model = model.eval()
-            model.train = disabled_train
-            self.mlp_model = model
-            self.first_stage_model = self.mlp_model.first_stage_model
+        model = instantiate_from_config(config_implicit)
+        model = model.eval()
+        model.train = disabled_train
+        self.mlp_model = model
+        self.first_stage_model = self.mlp_model.first_stage_model
 
     def init_cond_stage_from_ckpt(self, config):
         if config == "__is_first_stage__":
@@ -86,35 +80,38 @@ class Net2NetTransformer(pl.LightningModule):
             model.train = disabled_train
             self.cond_stage_model = model
 
-    def forward(self, x, c):
+    def forward(self, x, c, mask=None):
         # one step to produce the logits
         _, z_indices = self.encode_to_z(x.float())
         _, c_indices = self.encode_to_c(c.float())
 
+        # if during training, we'll mask out some tokens (0.15 by default)
+        assert not self.training or self.pkeep < 1.0 
+
         if self.training and self.pkeep < 1.0:
             mask = torch.bernoulli(self.pkeep*torch.ones(z_indices.shape,
                                                          device=z_indices.device))
-            mask = mask.round().to(dtype=torch.int64)
-            r_indices = torch.randint_like(z_indices, self.transformer.config.vocab_size)
-            a_indices = mask*z_indices+(1-mask)*r_indices
+            mask = mask.round().to(dtype=torch.int64) 
+            # !!! replacing masked indices with the [MASK] token (a.k.a -1)
+            r_indices = torch.full_like(z_indices, self.mask_token)
+            a_indices = mask*z_indices+(1-mask)*r_indices           
         else:
+            # during inference, mask is provided as input
+            assert mask is not None
             a_indices = z_indices
 
-        if self.use_condGPT:
-            # !!! removing last index from encoded codes
-            logits, _ = self.transformer(a_indices[:,:-1], c_indices)
-        else:
-            cz_indices = torch.cat((c_indices, a_indices), dim=1)
-            # make the prediction
-            # !!! removing last index from encoded codes
-            logits, _ = self.transformer(cz_indices[:, :-1])
+        a_indices = a_indices + 1 # adding one to the indices as MASK token is set to -1
+
+        # from this point we are making predictions on tokens where MASK==0 
+        cz_indices = torch.cat((c_indices, a_indices), dim=1)
+        logits, _ = self.transformer(cz_indices)
 
         # target includes all sequence elements (no need to handle first one
         # differently because we are conditioning)
         target = z_indices
-        # cut off conditioning outputs - output i corresponds to p(z_i | z_{<i}, c)
-        logits = logits[:, c_indices.shape[1]-1:]
-
+        import ipdb; ipdb.set_trace()
+        # cut off conditioning outputs
+        logits = logits[:, c_indices.shape[1]:]
         return logits, target
 
     def top_k_logits(self, logits, k):
