@@ -40,7 +40,6 @@ def instantiate_from_config(config):
         raise KeyError("Expected key `target` to instantiate.")
     return get_obj_from_str(config["target"])(**config.get("params", dict()))
 
-
 def get_obj_from_str(string, reload=False):
     module, cls = string.rsplit(".", 1)
     if reload:
@@ -157,8 +156,11 @@ def eval_fixsample(batch, image_idx, model, config, n_sample=4, do_not_generate=
               print(f"Sample: {sample} | Step: ({i},{j}) | Local: ({local_i},{local_j}) | Crop: ({i_start}:{i_end},{j_start}:{j_end})")
               write_images(os.path.join(save_path, f"image_{image_idx}_sample_{sample}.png"), tensor_to_numpy(x_sample))
 
-def tensify(x, device):
-    return torch.from_numpy(x[None]).permute(0,3,1,2).contiguous().float().to(device)
+def tensify(x, device, permute=True):
+    if permute:
+        return torch.from_numpy(x[None]).permute(0,3,1,2).contiguous().float().to(device)
+    else:
+        return torch.from_numpy(x[None]).contiguous().float().to(device)
 
 def tensor_to_numpy(x):
     return x.detach().cpu().numpy()[0].transpose(1,2,0)
@@ -247,6 +249,8 @@ def eval_half(*, data, idx, model, opt, config, save_path, **ignorekwargs):
     transformer = model
     n_sample = opt.sample 
     split_generate = opt.split
+
+    only_crop_tokens = False
     
     # ---------------------- first log the input data -----------------------------
     image = batch['image']
@@ -268,8 +272,12 @@ def eval_half(*, data, idx, model, opt, config, save_path, **ignorekwargs):
 
     # mask out half of the image before the encoding
     mask = LowerHalfMask(H)
-    image = image * mask
-    write_images(os.path.join(save_path, f'image_{image_idx}_masked.png'), image)
+
+    if only_crop_tokens:
+        write_images(os.path.join(save_path, f'image_{image_idx}_masked.png'), image * mask)
+    else:
+        image = image * mask
+        write_images(os.path.join(save_path, f'image_{image_idx}_masked.png'), image)
 
     # get the gt z_indices first
     x = tensify(image, torch.device('cuda')) # B, C, H, W
@@ -302,6 +310,42 @@ def eval_half(*, data, idx, model, opt, config, save_path, **ignorekwargs):
         write_images(os.path.join(save_path, f'image_{image_idx}_sample_{i_sample}_generate.png'), target_image)
         # ---------------------------------------------------------------------------------
 
+
+def eval_transformer_log(*, data, idx, model, opt, config, save_path, **ignorekwargs):
+    batch = data
+    image_name = batch['filename_']
+    image_idx = idx
+    transformer = model
+    n_sample = opt.sample 
+    split_generate = opt.split
+    
+    # ---------------------- first log the input data -----------------------------
+    image = batch['image']
+    unconditional = config.model.params.cond_stage_config == "__is_unconditional__"
+    if unconditional:
+        segmentation = image
+    else:
+        segmentation = batch['segmentation']
+        write_images(os.path.join(save_path, f'image_{image_idx}_segmentation.png'), segmentation)
+    write_images(os.path.join(save_path, f'image_{image_idx}_src.png'), image)
+    # -----------------------------------------------------------------------------
+
+    codebook_size = config.model.params.first_stage_config.params.embed_dim
+    nb = 1
+    res = 256
+    c_code_res = 16
+    H, W, C = image.shape
+
+    true_batch = dict()
+    true_batch['image'] = tensify(image, torch.device('cuda'), permute=False)
+    true_batch['segmentation'] = tensify(segmentation, torch.device('cuda'), permute=False) 
+
+    for i_sample in range(n_sample):
+        print(f"Generating samples for {image_name} at sample #{i_sample}")
+        log_images = transformer.log_images(true_batch)
+        for k in log_images.keys():
+            target_image = log_images[k][0].cpu().numpy().transpose(1,2,0)
+            write_images(os.path.join(save_path, f'{image_name}_sample_{i_sample}_{k}.png'), target_image)
 
 
 def eval_mult(*, data, idx, model, opt, config, save_path, **ignorekwargs):

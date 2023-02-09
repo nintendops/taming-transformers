@@ -2,13 +2,14 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.maskgit.MaskGIT
   params:
+    ckpt_path: /data/Haiwei/taming_ckpts/2023-02-06T21-59-20_maskGIT_testrun//checkpoints/last.ckpt
     cond_stage_key: segmentation
     transformer_config:
       target: taming.modules.transformer.mingpt.GPT
       params:
-        vocab_size: 1024
+        vocab_size: 1025
         block_size: 512  # = 256 + 256 = dim(vqgan_latent_space,16x16) 
-        n_layer: 40 # 24,40
+        n_layer: 24 # 24,40
         n_head: 16
         n_embd: 1408
         embd_pdrop: 0.1
@@ -41,10 +42,11 @@ model:
         lossconfig:
           target: taming.modules.losses.DummyLoss
     cond_stage_config: "__is_unconditional__"
+
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 4
+    batch_size: 6
     train:
       target: taming.data.owt.OWTMulti
       params:
@@ -52,7 +54,15 @@ data:
         dataroot: /data/Haiwei/Datasets/owt.txt
         multiplier: 1
         crop_size: 256
-
+    test:
+      target: taming.data.owt.OWTBase
+      params:
+        size: 272
+        dataroot: "/data/Haiwei/Datasets/USC/validate"
+        multiplier: 1
+        crop_size: 256
+        ignore_segmentation: true
+        split: "test"
 
 # data:
 #   target: main.DataModuleFromConfig

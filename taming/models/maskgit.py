@@ -58,11 +58,19 @@ class MaskGIT(pl.LightningModule):
         print(f"Restored from {path}")
 
     def init_first_stage_from_ckpt(self, config, config_implicit):
-        model = instantiate_from_config(config_implicit)
-        model = model.eval()
-        model.train = disabled_train
-        self.mlp_model = model
-        self.first_stage_model = self.mlp_model.first_stage_model
+        if config_implicit is None:
+            model = instantiate_from_config(config)
+            model = model.eval()
+            model.train = disabled_train
+            self.mlp_model = None
+            self.first_stage_model = model
+        else:
+            model = instantiate_from_config(config_implicit)
+            model = model.eval()
+            model.train = disabled_train
+            self.mlp_model = model
+            self.first_stage_model = self.mlp_model.first_stage_model
+
 
     def init_cond_stage_from_ckpt(self, config):
         if config == "__is_first_stage__":
@@ -109,9 +117,8 @@ class MaskGIT(pl.LightningModule):
         # target includes all sequence elements (no need to handle first one
         # differently because we are conditioning)
         target = z_indices
-        import ipdb; ipdb.set_trace()
-        # cut off conditioning outputs
-        logits = logits[:, c_indices.shape[1]:]
+        # cut off conditioning outputs (as well as the mask label)
+        logits = logits[:, c_indices.shape[1]:, 1:]
         return logits, target
 
     def top_k_logits(self, logits, k):
@@ -123,73 +130,70 @@ class MaskGIT(pl.LightningModule):
     @torch.no_grad()
     def sample(self, x, c, steps, temperature=1.0, sample=False, top_k=None,
                callback=lambda k: None):
+
+        # indices padding
+        x = x + 1
+        mask = (x == 0) # true: needs update, false: already updated
+
         if not self.use_condGPT:
             x = torch.cat((c,x),dim=1)
         block_size = self.transformer.get_block_size()
         assert not self.transformer.training
-        if self.pkeep <= 0.0:
-            # one pass suffices since input is pure noise anyway
-            assert len(x.shape)==2
-            noise_shape = (x.shape[0], steps-1)
-            #noise = torch.randint(self.transformer.config.vocab_size, noise_shape).to(x)
-            if self.use_condGPT:
-                noise = c.clone()[:,:-1]
-                x = torch.cat((x,noise),dim=1)
-                logits, _ = self.transformer(x, c)
-            else:
-                noise = c.clone()[:,x.shape[1]-c.shape[1]:-1]
-                x = torch.cat((x,noise),dim=1)
-                logits, _ = self.transformer(x)
 
-            # take all logits for now and scale by temp
-            logits = logits / temperature
+        for k in range(steps):
+            callback(k)
+            assert x.size(1) <= block_size # make sure model can see conditioning
+
+            # break if we have no candidate left
+            if mask.sum() == 0:
+                # print(f"sampling complete at step {k}/{steps}")
+                break
+
+            x_cond = x if x.size(1) <= block_size else x[:, -block_size:]  # crop context if needed
+            if self.use_condGPT:
+                logits, _ = self.transformer(x_cond, c)
+            else:
+                logits, _ = self.transformer(x_cond)
+
+            # pluck the logits at the final step and scale by temperature              
+            logits = logits[:, c.shape[1]:, 1:] / temperature
+
             # optionally crop probabilities to only the top k options
             if top_k is not None:
                 logits = self.top_k_logits(logits, top_k)
             # apply softmax to convert to probabilities
             probs = F.softmax(logits, dim=-1)
-            # sample from the distribution or take the most likely
+
+            # prune low confidence prediction (we are taking the top% confidence score ones and remove the rest)
+            B, L, D = probs.shape
+
+            k = min(max(L // steps, 4), mask.sum()//B + 1)
+
+            # gathering k most confident samples
+            max_probs, _ = torch.max(probs * mask[...,None], -1)
+            # B, k
+            k_candidates = torch.argsort(max_probs, 1, descending=True)[:,:k]
+            # B, L, D -> B, k, D
+            gathered_probs = torch.gather(probs, 1, k_candidates[...,None].expand(-1,-1,D)) 
+
             if sample:
-                shape = probs.shape
-                probs = probs.reshape(shape[0]*shape[1],shape[2])
-                ix = torch.multinomial(probs, num_samples=1)
-                probs = probs.reshape(shape[0],shape[1],shape[2])
-                ix = ix.reshape(shape[0],shape[1])
+                gathered_idx = torch.multinomial(gathered_probs.reshape(-1,D),num_samples=1).reshape(B,k)
             else:
-                _, ix = torch.topk(probs, k=1, dim=-1)
-            # cut off conditioning
-            if not self.use_condGPT:
-                x = ix[:, c.shape[1]-1:]
-        else:
-            for k in range(steps):
-                callback(k)
-                assert x.size(1) <= block_size # make sure model can see conditioning
-                x_cond = x if x.size(1) <= block_size else x[:, -block_size:]  # crop context if needed
-                if self.use_condGPT:
-                    logits, _ = self.transformer(x_cond, c)
-                else:
-                    logits, _ = self.transformer(x_cond)
+                _, gathered_idx = torch.topk(gathered_probs, k=1, dim=-1)
+                gathered_idx = gathered_idx[..., -1]
 
-                # pluck the logits at the final step and scale by temperature              
-                logits = logits[:, -1, :] / temperature
+            # updating mask and indices
+            for i in range(B):
+                mask[i, k_candidates[i]] = False
+                x[i, (k_candidates[i]+1)] = gathered_idx[i] + 1
 
+            # append to the sequence and continue
+            # x = torch.cat((x, ix), dim=1)
 
-                # optionally crop probabilities to only the top k options
-                if top_k is not None:
-                    logits = self.top_k_logits(logits, top_k)
-                # apply softmax to convert to probabilities
-                probs = F.softmax(logits, dim=-1)
-                # sample from the distribution or take the most likely
-                if sample:
-                    ix = torch.multinomial(probs, num_samples=1)
-                else:
-                    _, ix = torch.topk(probs, k=1, dim=-1)
-                # append to the sequence and continue
-                x = torch.cat((x, ix), dim=1)
-            # cut off conditioning
-            if not self.use_condGPT:
-                x = x[:, c.shape[1]:]
-        return x
+        # cut off conditioning
+        if not self.use_condGPT:
+            x = x[:, c.shape[1]:]
+        return x - 1
 
     @torch.no_grad()
     def encode_to_z(self, x):
@@ -224,7 +228,7 @@ class MaskGIT(pl.LightningModule):
         return x
 
     @torch.no_grad()
-    def log_images(self, batch, temperature=None, top_k=None, callback=None, lr_interface=False, **kwargs):
+    def log_images(self, batch, temperature=None, top_k=None, callback=None, lr_interface=False, composition=False, **kwargs):
         log = dict()
 
         N = 4
@@ -239,19 +243,38 @@ class MaskGIT(pl.LightningModule):
         quant_z, z_indices = self.encode_to_z(x)
         quant_c, c_indices = self.encode_to_c(c)
 
+        B, C, H, W = x.shape
+        gH, gW = quant_z.shape[2:]
+
         # create a "half"" sample
-        z_start_indices = z_indices[:,:z_indices.shape[1]//2]
+        mask = torch.ones(z_indices.shape, device=z_indices.device)
+        mask[:, z_indices.shape[1]//2:] = 0
+        mask = mask.to(dtype=torch.int64)
+        image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
+
+        r_indices = torch.full_like(z_indices, self.mask_token)
+        z_start_indices = mask*z_indices+(1-mask)*r_indices      
+
         index_sample = self.sample(z_start_indices, c_indices,
-                                   steps=z_indices.shape[1]-z_start_indices.shape[1],
+                                   steps= z_indices.shape[1]//2,
                                    temperature=temperature if temperature is not None else 1.0,
                                    sample=True,
                                    top_k=top_k if top_k is not None else 100,
                                    callback=callback if callback is not None else lambda k: None)
+        x_sample_half = self.decode_to_img(index_sample, quant_z.shape)
 
-        x_sample = self.decode_to_img(index_sample, quant_z.shape)
+        # composition
+        if composition:
+            x_sample_half = image_mask * x + (1 - image_mask) * x_sample_half
 
-        # sample
-        z_start_indices = z_indices[:, :0]
+        # inpainting sample
+        pkeep = 0.85
+        mask = torch.bernoulli(pkeep*torch.ones(z_indices.shape, device=z_indices.device))
+        mask = mask.round().to(dtype=torch.int64) 
+        image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
+
+        r_indices = torch.full_like(z_indices, self.mask_token)
+        z_start_indices = mask*z_indices+(1-mask)*r_indices      
         index_sample = self.sample(z_start_indices, c_indices,
                                    steps=z_indices.shape[1],
                                    temperature=temperature if temperature is not None else 1.0,
@@ -260,13 +283,23 @@ class MaskGIT(pl.LightningModule):
                                    callback=callback if callback is not None else lambda k: None)
         x_sample_nopix = self.decode_to_img(index_sample, quant_z.shape)
 
-        # det sample
-        z_start_indices = z_indices[:, :0]
+        # composition
+        if composition:
+            x_sample_nopix = image_mask * x + (1 - image_mask) * x_sample_nopix
+
+
+        # det inpainting sample
         index_sample = self.sample(z_start_indices, c_indices,
                                    steps=z_indices.shape[1],
                                    sample=False,
                                    callback=callback if callback is not None else lambda k: None)
         x_sample_det = self.decode_to_img(index_sample, quant_z.shape)
+
+        # composition
+        if composition:
+            x_sample_det = image_mask * x + (1 - image_mask) * x_sample_det
+
+        x_masked = image_mask * x
 
         # reconstruction
         x_rec = self.decode_to_img(z_indices, quant_z.shape)
@@ -303,9 +336,11 @@ class MaskGIT(pl.LightningModule):
             log["conditioning_rec"] = cond_rec
             log["conditioning"] = c
 
-        log["samples_half"] = x_sample
+        log["samples_half"] = x_sample_half
         log["samples_nopix"] = x_sample_nopix
         log["samples_det"] = x_sample_det
+        log["inputs_masked"] = x_masked
+
         return log
 
     def get_input(self, key, batch):

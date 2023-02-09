@@ -33,8 +33,8 @@ def get_parser(**parser_kwargs):
         "-m",
         "--mode",
         type=str,
-        default="transformer_half",
-        help="vqgan | attgan | transformer",
+        default="transformer",
+        help="vqgan | attgan | transformer | transformer_half ",
     )
     parser.add_argument(
         "--base",
@@ -49,13 +49,13 @@ def get_parser(**parser_kwargs):
         default="",
         help="path to checkpoints",
     )
-    parser.add_argument(
-        "-d",
-        "--datadir",
-        type=str,
-        default="",
-        help="path to datasets",
-    )
+    # parser.add_argument(
+    #     "-d",
+    #     "--datadir",
+    #     type=str,
+    #     default="",
+    #     help="path to datasets",
+    # )
     parser.add_argument(
         "--multiplier",
         type=float,
@@ -65,7 +65,7 @@ def get_parser(**parser_kwargs):
         "-n",
         "--sample",
         type=int,
-        default=2,
+        default=1,
     )
     parser.add_argument(
         "--split",
@@ -126,12 +126,17 @@ if __name__ == '__main__':
     data.prepare_data()
     data.setup()
     print("Done!")
-    dataset = data.datasets['train']
+
+    if 'test' in data.datasets.keys():
+        dataset = data.datasets['test']
+    else:
+        dataset = data.datasets['train']
+
     dataset_iter = iter(data._train_dataloader())
     data_select = range(len(dataset))
 
     if opt.mode == 'transformer':
-        eval_method = eval_mult
+        eval_method = eval_transformer_log
     elif opt.mode == "transformer_half":
         eval_method = eval_half      
     elif opt.mode == 'vqgan':

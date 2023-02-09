@@ -47,7 +47,7 @@ class OWTBase(Dataset):
 
     def initialize_processor(self, force_no_crop=False):
         self.rescaler = albumentations.SmallestMaxSize(max_size=self.size)
-        if self.split=="validation":
+        if self.split!="train":
             self.cropper = albumentations.CenterCrop(height=self.crop_size, width=self.crop_size)
             self.hflipper = albumentations.HorizontalFlip(p=0.0)
         else:
