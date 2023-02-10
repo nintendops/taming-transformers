@@ -30,7 +30,7 @@ def vanilla_d_loss(logits_real, logits_fake):
         torch.mean(torch.nn.functional.softplus(logits_fake)))
     return d_loss
 
-class ATTPIPSWithDiscriminator(nn.Module):
+class PIPSWithDiscriminator(nn.Module):
     '''
         Perception loss without quantization
     '''
