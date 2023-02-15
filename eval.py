@@ -62,7 +62,6 @@ def get_parser(**parser_kwargs):
         default=1.0,
     )
     parser.add_argument(
-        "-n",
         "--sample",
         type=int,
         default=1,
@@ -81,6 +80,13 @@ def get_parser(**parser_kwargs):
         default=True,
         nargs="?",
     )
+    parser.add_argument(
+        "-n",
+        "--name",
+        type=str,
+        default="eval",
+        help="optional name for the save folder",
+    )
     return parser
 
 
@@ -93,7 +99,7 @@ if __name__ == '__main__':
     # key configuration: config and ckpt path
     config_path = opt.base
     ckpt_path = opt.ckpt
-    expname = os.path.basename(config_path).split('.yaml')[0]
+    expname = opt.name + '_' + os.path.basename(config_path).split('.yaml')[0]
 
     # loading config
     save_path = os.path.join("logs/eval", f"{expname}_{now}")

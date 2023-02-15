@@ -11,6 +11,11 @@ from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 from taming.modules.vqvae.quantize import GumbelQuantize
 from taming.modules.vqvae.quantize import EMAVectorQuantizer
 
+def disabled_train(self, mode=True):
+    """Overwrite model.train with this function to make sure train/eval mode
+    does not change anymore."""
+    return self
+
 def write_images(path, image, n_row=1):
     image = ((image + 1) * 255 / 2).astype(np.uint8)
     if image.ndim == 3:
@@ -23,7 +28,7 @@ def write_images(path, image, n_row=1):
 # mask functions
 def box_mask(r, mr, nb, device):
     assert mr <= r
-    mask = np.ones(nb, 1, r, r).astype(np.int32)
+    mask = np.ones([nb, 1, r, r]).astype(np.int32)
     for i in range(nb):
         h, w = np.random.randint(0, r-mr, 2)
         mask[i, :, h:h+mr, w:w+mr] = 0
@@ -81,16 +86,11 @@ class RefinementAE(pl.LightningModule):
         model.train = disabled_train
         self.first_stage_model = model
 
-    def encode(self, x, mask=None):
-        # first, get a composition of quantized reconstruction and the original image
-        if mask is None:
-            mask = self.get_mask([x.shape[0], 1, x.shape[2], x.shape[3]], x.device)
-        x_fstg, _ = self.first_stage_model(x)
-        x_comp = mask * x + (1 - mask) + x_fstg 
+    def encode(self, x):
         # encode the composited image
-        h = self.encoder(x_comp)
+        h = self.encoder(x)
         h = self.bottleneck_conv(h)
-        return h, mask, x_fstg
+        return h
 
     def decode(self, h):
         h = self.post_bottleneck_conv(h)
@@ -108,11 +108,23 @@ class RefinementAE(pl.LightningModule):
     #     return dec
 
     def forward(self, input, mask=None, composition=True):
-        h, mask, x_fstg = self.encode(input, mask)
+        # first, get a composition of quantized reconstruction and the original image
+        if mask is None:
+            mask = self.get_mask([input.shape[0], 1, input.shape[2], input.shape[3]], input.device)
+        x_fstg, _ = self.first_stage_model(input)
+        x_comp = mask * input + (1 - mask) * x_fstg 
+        h = self.encode(x_comp)
         dec = self.decode(h)
         if composition:
-            dec = mask * input + (1-mask) * dec
-        return dec, mask, x_fstg
+            dec = mask * input + (1 - mask) * dec
+        return dec, mask, x_comp
+
+    def refine(self, x, mask=None):
+        dec = self.decode(self.encode(x))
+        if mask is not None:
+            return mask * x + (1-mask) * dec
+        else:
+            return dec
 
     def get_input(self, batch, k):
         x = batch[k]

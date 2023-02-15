@@ -2,7 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.maskgit.MaskGIT
   params:
-    ckpt_path: /data/Haiwei/taming_ckpts/2023-02-06T21-59-20_maskGIT_testrun//checkpoints/last.ckpt
+    ckpt_path: /data/Haiwei/taming_ckpts/2023-02-09T16-26-57_maskGIT_testrun/checkpoints/last.ckpt
     cond_stage_key: segmentation
     transformer_config:
       target: taming.modules.transformer.mingpt.GPT
@@ -21,6 +21,59 @@ model:
         ckpt_path: /data/Haiwei/taming_ckpts/2022-12-02T11-02-19_allusc_vqgan_1024_baseline_cont/checkpoints/last.ckpt
         embed_dim: 512
         n_embed: 1024
+        ddconfig:
+          padding_free: false
+          double_z: false
+          z_channels: 512
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 1
+          - 2
+          - 2
+          - 4
+          num_res_blocks: 2
+          attn_resolutions:
+          - 16
+          dropout: 0.0
+        lossconfig:
+          target: taming.modules.losses.DummyLoss
+    refinement_stage_config:
+      target: taming.models.refinement_ae.RefinementAE
+      params:
+        ckpt_path: /data/Haiwei/taming_ckpts/2023-02-09T16-27-21_refinement_testrun/checkpoints/last.ckpt
+        embed_dim: 512
+        n_embed: 1024
+        image_key: "image"
+        first_stage_config:
+          target: taming.models.vqgan.VQModel
+          params:
+            ckpt_path: /data/Haiwei/taming_ckpts/2022-12-02T11-02-19_allusc_vqgan_1024_baseline_cont/checkpoints/last.ckpt
+            embed_dim: 512
+            n_embed: 1024
+            ddconfig:
+              padding_free: false
+              double_z: false
+              z_channels: 512
+              resolution: 256
+              in_channels: 3
+              out_ch: 3
+              ch: 128
+              ch_mult:
+              - 1
+              - 1
+              - 2
+              - 2
+              - 4
+              num_res_blocks: 2
+              attn_resolutions:
+              - 16
+              dropout: 0.0
+            lossconfig:
+              target: taming.modules.losses.DummyLoss
         ddconfig:
           padding_free: false
           double_z: false

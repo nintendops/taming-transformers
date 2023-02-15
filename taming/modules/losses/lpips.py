@@ -10,7 +10,7 @@ from taming.util import get_ckpt_path
 
 class LPIPS(nn.Module):
     # Learned perceptual metric
-    def __init__(self, use_dropout=True):
+    def __init__(self, use_dropout=True, filt=None):
         super().__init__()
         self.scaling_layer = ScalingLayer()
         self.chns = [64, 128, 256, 512, 512]  # vg16 features
@@ -21,6 +21,7 @@ class LPIPS(nn.Module):
         self.lin3 = NetLinLayer(self.chns[3], use_dropout=use_dropout)
         self.lin4 = NetLinLayer(self.chns[4], use_dropout=use_dropout)
         self.load_from_pretrained()
+        self.filt = filt
         for param in self.parameters():
             param.requires_grad = False
 
@@ -48,9 +49,11 @@ class LPIPS(nn.Module):
             diffs[kk] = (feats0[kk] - feats1[kk]) ** 2
 
         res = [spatial_average(lins[kk].model(diffs[kk]), keepdim=True) for kk in range(len(self.chns))]
-        val = res[0]
-        for l in range(1, len(self.chns)):
-            val += res[l]
+        val = 0
+        for l in range(0, len(self.chns)):
+            if self.filt is None or l in self.filt:
+                # selectively add perceptual distance based on filter-specified layers
+                val += res[l]
         return val
 
 

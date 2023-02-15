@@ -37,11 +37,21 @@ data:
   params:
     batch_size: 8
     train:
+      target: taming.data.owt.OWTMulti
+      params:
+        size: 272
+        dataroot: /data/Haiwei/Datasets/owt.txt
+        multiplier: 1
+        crop_size: 256
+    test:
       target: taming.data.owt.OWTBase
       params:
         size: 272
-        dataroot: "/home/ICT2000/chenh/Haiwei/Datasets/OWT/USC_Galen_Center"
+        dataroot: "/data/Haiwei/Datasets/USC/SourceImages" # validate / SourceImages
+        multiplier: 1
         crop_size: 256
+        ignore_segmentation: true
+        split: "test"
 # data:
 #   target: main.DataModuleFromConfig
 #   params:
