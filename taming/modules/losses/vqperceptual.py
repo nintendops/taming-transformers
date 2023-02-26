@@ -37,11 +37,11 @@ class PIPSWithDiscriminator(nn.Module):
     def __init__(self, disc_start,  pixelloss_weight=1.0,
                  disc_num_layers=3, disc_in_channels=3, disc_factor=1.0, disc_weight=1.0,
                  perceptual_weight=1.0, use_actnorm=False, disc_conditional=False,
-                 disc_ndf=64, disc_loss="hinge"):
+                 disc_ndf=64, perceptual_filter=None, disc_loss="hinge"):
         super().__init__()
         assert disc_loss in ["hinge", "vanilla"]
         self.pixel_weight = pixelloss_weight
-        self.perceptual_loss = LPIPS().eval()
+        self.perceptual_loss = LPIPS(filt=perceptual_filter).eval()
         self.perceptual_weight = perceptual_weight
         self.discriminator = NLayerDiscriminator(input_nc=disc_in_channels,
                                                  n_layers=disc_num_layers,
@@ -78,7 +78,7 @@ class PIPSWithDiscriminator(nn.Module):
         rec_loss = torch.abs(inputs.contiguous() - reconstructions.contiguous())
         if self.perceptual_weight > 0:
             p_loss = self.perceptual_loss(inputs.contiguous(), reconstructions.contiguous())
-            rec_loss = rec_loss + self.perceptual_weight * p_loss
+            rec_loss = self.pixel_weight * rec_loss + self.perceptual_weight * p_loss
         else:
             p_loss = torch.tensor([0.0])
 

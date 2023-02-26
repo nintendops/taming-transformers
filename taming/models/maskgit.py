@@ -28,6 +28,7 @@ class MaskGIT(pl.LightningModule):
                  mask_function="random_mask",
                  downsample_cond_size=-1,
                  pkeep=0.5,
+                 sampling_ratio=0.1,
                  sos_token=0,
                  unconditional=False,
                  ):
@@ -56,6 +57,7 @@ class MaskGIT(pl.LightningModule):
 
         # todo: remove hard-coded mapping
         self.mask_function = self.box_mask
+        self.sampling_ratio = sampling_ratio
 
     def init_from_ckpt(self, path, ignore_keys=list()):
         sd = torch.load(path, map_location="cpu")["state_dict"]
@@ -72,6 +74,7 @@ class MaskGIT(pl.LightningModule):
         model = model.eval()
         model.train = disabled_train
         self.first_stage_model = model
+        self.second_stage_model = None
 
     def init_full_stages_from_ckpt(self, config):
         model = instantiate_from_config(config)
@@ -108,10 +111,8 @@ class MaskGIT(pl.LightningModule):
         return mask
 
     def box_mask(self, z_indices, p=None):
-
         p = self.pkeep if p is None else p
         assert p <= 1 and p >= 0
-
         nb = z_indices.shape[0]
         r = int(z_indices.shape[-1]**0.5)
         mr = int((1-p) * r)
@@ -122,27 +123,40 @@ class MaskGIT(pl.LightningModule):
         mask = torch.from_numpy(mask).reshape(nb, -1).to(z_indices.device)
         return mask
 
+    def preprocess_mask(self, mask, z_indices):
+        B = z_indices.shape[0]
+        r = int(z_indices.shape[-1]**0.5)
+        if len(mask.shape) == 4:
+            H = mask.shape[-1]
+            mask = torch.nn.functional.interpolate(mask.float(), scale_factor=r/H)
+            mask = mask.reshape(B, -1)
+        elif len(mask.shape) == 3:
+            assert mask.shape[1] == 1 and mask.shape[-1] == z_indices.shape[-1]
+            mask = mask.reshape(B, -1)
+        else:
+            assert len(mask.shape) == 2 and mask.shape[-1] == z_indices.shape[-1]
+        mask = mask.to(dtype=torch.int64)
+        return mask
+
     def forward(self, x, c, mask=None):
         # one step to produce the logits
         _, z_indices = self.encode_to_z(x.float())
         _, c_indices = self.encode_to_c(c.float())
 
-        # if during training, we'll mask out some tokens (0.15 by default)
-        assert not self.training or self.pkeep < 1.0 
+        # during training, we'll mask out some tokens (0.15 by default)
+        assert mask is not None or self.pkeep < 1.0 
 
-        if self.training and self.pkeep < 1.0:
+        if mask is None:
             # mask = torch.bernoulli(self.pkeep*torch.ones(z_indices.shape,
             #                                              device=z_indices.device))
             # mask = mask.round().to(dtype=torch.int64) 
             mask = self.mask_function(z_indices)
-            # !!! replacing masked indices with the [MASK] token (a.k.a -1)
-            r_indices = torch.full_like(z_indices, self.mask_token)
-            a_indices = mask*z_indices+(1-mask)*r_indices           
         else:
-            # during inference, mask is provided as input
-            assert mask is not None
-            a_indices = z_indices
+            mask = self.preprocess_mask(mask, z_indices)
 
+        # !!! replacing masked indices with the [MASK] token (a.k.a -1)
+        r_indices = torch.full_like(z_indices, self.mask_token)
+        a_indices = mask*z_indices+(1-mask)*r_indices           
         a_indices = a_indices + 1 # adding one to the indices as MASK token is set to -1
 
         # from this point we are making predictions on tokens where MASK==0 
@@ -163,7 +177,7 @@ class MaskGIT(pl.LightningModule):
         return out
 
     @torch.no_grad()
-    def sample(self, x, c, steps, temperature=1.0, sample=False, top_k=None,
+    def sample(self, x, c, temperature=1.0, sample=False, top_k=None,
                callback=lambda k: None):
 
         # indices padding
@@ -174,6 +188,10 @@ class MaskGIT(pl.LightningModule):
             x = torch.cat((c,x),dim=1)
         block_size = self.transformer.get_block_size()
         assert not self.transformer.training
+
+        k_unknown = mask[0].sum()
+        n_sample = int(x.size(1) * self.sampling_ratio)
+        steps = max(1, k_unknown // n_sample) + 2
 
         for k in range(steps):
             callback(k)
@@ -202,7 +220,9 @@ class MaskGIT(pl.LightningModule):
             # prune low confidence prediction (we are taking the top% confidence score ones and remove the rest)
             B, L, D = probs.shape
 
-            k = min(max(L // steps, 4), mask.sum()//B + 1)
+            k = min(n_sample, mask.sum()//B) # min(max(L // steps, 4), mask.sum()//B + 1)
+            # print(f"taking top {k} from the unpredicted {mask.sum()//B}")
+            # import ipdb; ipdb.set_trace()
 
             # gathering k most confident samples
             max_probs, _ = torch.max(probs * mask[...,None], -1)
@@ -260,6 +280,34 @@ class MaskGIT(pl.LightningModule):
         return x
 
     @torch.no_grad()
+    def forward_with_recon(self, batch, mask=None, det=False):
+        '''
+        similar to log image, but return a single image tensor given the default mask function instead of logging results
+
+        '''
+        x, c = self.get_xc(batch)
+        x = x.to(device=self.device).float()
+        c = c.to(device=self.device).float()
+        quant_z, z_indices = self.encode_to_z(x)
+        quant_c, c_indices = self.encode_to_c(c)
+        B, C, H, W = x.shape
+        gH, gW = quant_z.shape[2:]
+        if mask is None:
+            mask = self.mask_function(z_indices)
+        else:
+            mask = self.preprocess_mask(mask, z_indices)
+        r_indices = torch.full_like(z_indices, self.mask_token)
+        z_start_indices = mask*z_indices+(1-mask)*r_indices      
+
+        index_sample = self.sample(z_start_indices, 
+                                   c_indices,
+                                   sample= not det)
+        recon =  self.decode_to_img(index_sample, quant_z.shape)
+        # image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
+        # recon = image_mask * x + (1 - image_mask) * recon
+        return recon
+
+    @torch.no_grad()
     def log_images(self, batch, temperature=None, top_k=None, callback=None, lr_interface=False, composition=True, **kwargs):
         log = dict()
 
@@ -288,7 +336,6 @@ class MaskGIT(pl.LightningModule):
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
 
         index_sample = self.sample(z_start_indices, c_indices,
-                                   steps= z_indices.shape[1]//2,
                                    temperature=temperature if temperature is not None else 1.0,
                                    sample=True,
                                    top_k=top_k if top_k is not None else 100,
@@ -313,7 +360,6 @@ class MaskGIT(pl.LightningModule):
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
         index_sample = self.sample(z_start_indices, c_indices,
-                                   steps=z_indices.shape[1],
                                    temperature=temperature if temperature is not None else 1.0,
                                    sample=True,
                                    top_k=top_k if top_k is not None else 100,
@@ -328,14 +374,13 @@ class MaskGIT(pl.LightningModule):
 
         # det inpainting sample
         index_sample = self.sample(z_start_indices, c_indices,
-                                   steps=z_indices.shape[1],
                                    sample=False,
                                    callback=callback if callback is not None else lambda k: None)
         x_sample_det = self.decode_to_img(index_sample, quant_z.shape)
 
         # composition
         if composition:
-            x_sample_det = image_mask * x + (1 - image_mask) * x_sample_det
+            x_sample_det_comp = image_mask * x + (1 - image_mask) * x_sample_det
             if self.second_stage_model is not None:
                 x_sample_det = self.second_stage_model.refine(x_sample_det, image_mask)
 
@@ -376,9 +421,10 @@ class MaskGIT(pl.LightningModule):
             log["conditioning_rec"] = cond_rec
             log["conditioning"] = c
 
-        log["samples_half"] = x_sample_half
-        log["samples_nopix"] = x_sample_nopix
-        log["samples_det"] = x_sample_det
+        # log["samples_half"] = x_sample_half
+        # log["samples_nopix"] = x_sample_nopix
+        log["samples_det_gen"] = x_sample_det
+        log["samples_det"] = x_sample_det_comp
         log["inputs_masked"] = x_masked
 
         return log

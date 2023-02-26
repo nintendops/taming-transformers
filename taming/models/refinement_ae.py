@@ -107,16 +107,26 @@ class RefinementAE(pl.LightningModule):
     #     dec = self.decode(quant_b)
     #     return dec
 
-    def forward(self, input, mask=None, composition=True):
+    def forward(self, batch, mask=None, composition=True):
+
+        input = self.get_input(batch, self.image_key)
+
         # first, get a composition of quantized reconstruction and the original image
         if mask is None:
             mask = self.get_mask([input.shape[0], 1, input.shape[2], input.shape[3]], input.device)
-        x_fstg, _ = self.first_stage_model(input)
-        x_comp = mask * input + (1 - mask) * x_fstg 
+        
+        # enable this if first stage model is an VQ autoencoder
+        # x_fstg, _ = self.first_stage_model(input)
+        
+        # enable this if first stage model is a maskGIT transformer
+        x_fstg = self.first_stage_model.forward_with_recon(batch, mask=mask)
+        x_comp = mask * input + (1 - mask) * x_fstg
+
         h = self.encode(x_comp)
         dec = self.decode(h)
         if composition:
             dec = mask * input + (1 - mask) * dec
+
         return dec, mask, x_comp
 
     def refine(self, x, mask=None):
@@ -131,7 +141,7 @@ class RefinementAE(pl.LightningModule):
         if len(x.shape) == 3:
             x = x[..., None]
         x = x.permute(0, 3, 1, 2).to(memory_format=torch.contiguous_format)
-        return x.float()
+        return x.float().to(self.device)
 
     def get_mask(self, shape, device):
         B, _, H, W = shape
@@ -139,7 +149,7 @@ class RefinementAE(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         x = self.get_input(batch, self.image_key)
-        xrec, mask, _ = self(x)
+        xrec, mask, _ = self(batch)
         if optimizer_idx == 0:
             # autoencode
             aeloss, log_dict_ae = self.loss(x, xrec, optimizer_idx, self.global_step,
@@ -159,7 +169,7 @@ class RefinementAE(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x = self.get_input(batch, self.image_key)
-        xrec, mask, _ = self(x)
+        xrec, mask, _ = self(batch)
         aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
                                             last_layer=self.get_last_layer(), split="val")
 
@@ -177,7 +187,7 @@ class RefinementAE(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         from PIL import Image
         x = self.get_input(batch, self.image_key)
-        xrec, mask, _ = self(x)
+        xrec, mask, _ = self(batch)
         aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
                                             last_layer=self.get_last_layer(), split="val")
 
@@ -220,7 +230,7 @@ class RefinementAE(pl.LightningModule):
         log = dict()
         x = self.get_input(batch, self.image_key)
         x = x.to(self.device)
-        xrec, mask, xrec_fstg = self(x)
+        xrec, mask, xrec_fstg = self(batch)
         
         if x.shape[1] > 3:
             # colorize with random projection

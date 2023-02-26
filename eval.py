@@ -153,10 +153,14 @@ if __name__ == '__main__':
         print(f"No mode found for {opt.mode}!")
         exit()
 
+    import time
+
     eval_method = functools.partial(eval_method, model=model, opt=opt, config=config, save_path=save_path)
     with torch.no_grad():
         for i in data_select:
             batch_data = dataset[i]
+            start = time.time()
             eval_method(data=batch_data, idx=i)
+            print("Time spent on inference is %.2f seconds"%(time.time() - start))
             # eval_mult(batch_data, i, model, None, config, None, multiplier=scale)
 
