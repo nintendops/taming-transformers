@@ -14,6 +14,7 @@ DEBUG_MODE = False
 class OWTBase(Dataset):
     def __init__(self, size=None, dataroot="", multiplier=20, onehot_segmentation=False, ignore_segmentation=False,
                  crop_size=None, force_no_crop=False, given_files=None, multiscale_factor=1.0, extension='JPG', split='train'):
+        self.name = 'owt'
         self.ext = extension
         self.split = split # self.get_split()
         self.size = size
@@ -26,7 +27,6 @@ class OWTBase(Dataset):
         self.onehot = onehot_segmentation       # return segmentation as rgb or one hot
         self.dataroot = dataroot
         self.ignore_segmentation = ignore_segmentation
-
         self.initialize_paths()
         self.initialize_processor(force_no_crop)
 
@@ -49,7 +49,7 @@ class OWTBase(Dataset):
     def initialize_processor(self, force_no_crop=False):
         self.rescaler = albumentations.SmallestMaxSize(max_size=self.size)
         if self.split!="train":
-            self.cropper = albumentations.CenterCrop(height=self.crop_size, width=self.crop_size)
+            self.cropper = albumentations.RandomCrop(height=self.crop_size, width=self.crop_size)
             self.hflipper = albumentations.HorizontalFlip(p=0.0)
         else:
             self.cropper = albumentations.RandomCrop(height=self.crop_size, width=self.crop_size)

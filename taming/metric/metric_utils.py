@@ -33,10 +33,11 @@ import cv2
 #         self.cache          = cache
 
 class MetricOptions:
-    def __init__(self, G=None, G_kwargs={}, dataset=None, G_callback=None, num_gpus=1, rank=0, device=None, progress=None, cache=True):
+    def __init__(self, G=None, G_kwargs={}, dataset_kwargs={}, dataset=None, G_callback=None, num_gpus=1, rank=0, device=None, progress=None, cache=True):
         assert 0 <= rank < num_gpus
         self.G              = G
         self.G_kwargs       = dnnlib.EasyDict(G_kwargs)
+        self.dataset_kwargs = dnnlib.EasyDict(dataset_kwargs)
         self.dataset        = dataset
         self.G_callback     = G_callback
         self.num_gpus       = num_gpus
@@ -44,7 +45,6 @@ class MetricOptions:
         self.device         = device if device is not None else torch.device('cuda', rank)
         self.progress       = progress.sub() if progress is not None and rank == 0 else ProgressMonitor()
         self.cache          = cache
-
 
 #----------------------------------------------------------------------------
 
@@ -192,12 +192,14 @@ class ProgressMonitor:
         )
 
 #----------------------------------------------------------------------------
+def image_normalization(img):
+    return ((img + 1.0) * 127.5).clamp(0, 255).round().to(torch.uint8)
 
 def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, max_items=None, **stats_kwargs):
 
 
-    dataset = opt.dataset # dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
-    # get_image = opt.image_callback
+    dataset = opts.dataset # dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
+    # get_image = opts.image_callback
 
     if data_loader_kwargs is None:
         data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
@@ -226,6 +228,7 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
     num_items = len(dataset)
     if max_items is not None:
         num_items = min(num_items, max_items)
+
     stats = FeatureStats(max_items=num_items, **stats_kwargs)
     progress = opts.progress.sub(tag='dataset features', num_items=num_items, rel_lo=rel_lo, rel_hi=rel_hi)
     detector = get_feature_detector(url=detector_url, device=opts.device, num_gpus=opts.num_gpus, rank=opts.rank, verbose=progress.verbose)
@@ -235,11 +238,14 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
 
     # for images, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs):
     # adaptation to inpainting
+    # import ipdb; ipdb.set_trace()
 
     # DATASET LOOP
     for batch in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size,
                                                        **data_loader_kwargs):
-        image = batch['image'] # get_image(batch)
+        images = image_normalization(batch['image']) # get_image(batch)
+        images = images.permute(0, 3, 1, 2).to(memory_format=torch.contiguous_format)
+
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
         features = detector(images.to(opts.device), **detector_kwargs)
@@ -256,7 +262,7 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
 
 #----------------------------------------------------------------------------
 
-def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, **stats_kwargs):
+def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, batch_gen=4, data_loader_kwargs=None, **stats_kwargs):
     if data_loader_kwargs is None:
         data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
 
@@ -266,8 +272,8 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
 
     # Setup generator and load labels.
     G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
-    dataset = opt.dataset # dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
-    run_generator = opt.G_callback
+    dataset = opts.dataset # dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
+    run_generator = opts.G_callback
 
     # Image generation func.
     # def run_generator(img_in, mask_in, z, c):
@@ -276,6 +282,8 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
     #     img = ((img + 1.0) * 127.5).clamp(0, 255).round().to(torch.uint8)
     #     return img
 
+    num_items = len(dataset)
+
     # Initialize.
     stats = FeatureStats(**stats_kwargs)
     assert stats.max_items is not None
@@ -283,12 +291,17 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
     detector = get_feature_detector(url=detector_url, device=opts.device, num_gpus=opts.num_gpus, rank=opts.rank, verbose=progress.verbose)
 
     # Main loop.
-    item_subset = [(i * opts.num_gpus + opts.rank) % stats.max_items for i in range((stats.max_items - 1) // opts.num_gpus + 1)]
-    for batch in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset,
-                                                              batch_size=batch_size,
-                                                              **data_loader_kwargs):
+    # item_subset = [(i * opts.num_gpus + opts.rank) % stats.max_items for i in range((stats.max_items - 1) // opts.num_gpus + 1)]
+
+    item_subset = [(i * opts.num_gpus + opts.rank) % num_items for i in range((stats.max_items - 1) // opts.num_gpus + 1)]
+
+    # for batch in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset,
+    #                                                           batch_size=batch_size,
+    #                                                           **data_loader_kwargs):
+
+    for batch in torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size, **data_loader_kwargs):
         images = []
-        images += run_generator(G, batch)
+
         # --------------------------------------------------------------------------------------
         # imgs_gen = (imgs_batch.to(opts.device).to(torch.float32) / 127.5 - 1).split(batch_gen)
         # masks_gen = masks_batch.to(opts.device).to(torch.float32).split(batch_gen)
@@ -297,8 +310,17 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
         #     c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(img_in.shape[0])]
         #     c = torch.from_numpy(np.stack(c)).pin_memory().to(opts.device)
         #     images.append(run_generator(img_in, mask_in, z, c))
+        # images = torch.cat(images)
         # --------------------------------------------------------------------------------------
-        images = torch.cat(images)
+
+        B = batch['image'].shape[0]
+        for i in range(0, B, batch_gen):
+            end_idx = min(B, i + batch_gen)
+            new_batch = dict(image=batch['image'][i:end_idx])
+            image_batch_gen = image_normalization(run_generator(G, new_batch))
+            images.append(image_batch_gen)
+        images = torch.cat(images, dim=0)
+
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
         features = detector(images, **detector_kwargs)
