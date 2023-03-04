@@ -124,6 +124,7 @@ class RefinementAE(pl.LightningModule):
 
         h = self.encode(x_comp)
         dec = self.decode(h)
+        
         if composition:
             dec = mask * input + (1 - mask) * dec
 
