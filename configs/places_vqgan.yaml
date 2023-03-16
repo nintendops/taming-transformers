@@ -2,6 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.vqgan.VQModel
   params:
+    ckpt_path: logs/places_256_vqgan_BASEMODEL/checkpoints/last.ckpt
     embed_dim: 256
     n_embed: 8192
     image_key: "image"
@@ -34,12 +35,14 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 2
+    batch_size: 8
     train:
       target: taming.data.places365.Places
       params:
-        dataroot: /home/ICT2000/chenh/Haiwei/Datasets/Places365/data_large
+        dataroot: /data/Haiwei/Datasets/Places365/data_large
         crop_size: 256
+        rescale: True
+        rescale_size: 256
         split: 'train'
     # test:
     #   target: taming.data.places365.Places

@@ -127,7 +127,7 @@ if __name__ == '__main__':
     
     # loading dataset
     print("instantiating Dataset...")
-    config.data.params.train.params.split = "validation"
+    # config.data.params.train.params.split = "validation"
     data = instantiate_from_config(config.data)
     data.prepare_data()
     data.setup()

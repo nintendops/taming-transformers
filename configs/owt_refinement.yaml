@@ -2,7 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.refinement_ae.RefinementAE
   params:
-    ckpt_path: logs/2023-02-18T22-14-21_maskgit_refinement_pw01/checkpoints/last.ckpt
+    # ckpt_path: logs/2023-02-18T22-14-21_maskgit_refinement_pw01/checkpoints/last.ckpt
     embed_dim: 512
     n_embed: 1024
     image_key: "image"
@@ -55,7 +55,7 @@ model:
       double_z: false
       z_channels: 512
       resolution: 256
-      in_channels: 3
+      in_channels: 4
       out_ch: 3
       ch: 128
       ch_mult:
@@ -73,12 +73,13 @@ model:
       params:
         pixelloss_weight: 0.0
         perceptual_weight: 0.1
+        r1_weight: 0.0
         perceptual_filter:
         - 3
         - 4
         disc_conditional: False
-        disc_in_channels: 3
-        disc_start: 1
+        disc_in_channels: 4
+        disc_start: 0
         disc_weight: 1.0
 
 # data:

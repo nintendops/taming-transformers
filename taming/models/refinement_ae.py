@@ -35,6 +35,10 @@ def box_mask(r, mr, nb, device):
     return torch.from_numpy(mask).to(device)
 
 class RefinementAE(pl.LightningModule):
+    '''
+        Refinement model for maskgit transformer:
+            refine given a recomposition of the inferred masked region and the original image
+    '''
     def __init__(self,
                  first_stage_config,
                  ddconfig,
@@ -121,8 +125,9 @@ class RefinementAE(pl.LightningModule):
         # enable this if first stage model is a maskGIT transformer
         x_fstg = self.first_stage_model.forward_with_recon(batch, mask=mask)
         x_comp = mask * input + (1 - mask) * x_fstg
+        x_in = torch.cat([mask - 0.5, x_comp], dim=1)
 
-        h = self.encode(x_comp)
+        h = self.encode(x_in)
         dec = self.decode(h)
         
         if composition:
@@ -154,7 +159,7 @@ class RefinementAE(pl.LightningModule):
         if optimizer_idx == 0:
             # autoencode
             aeloss, log_dict_ae = self.loss(x, xrec, optimizer_idx, self.global_step,
-                                            last_layer=self.get_last_layer(), split="train")
+                                            mask=mask, last_layer=self.get_last_layer(), split="train")
 
             self.log("train/aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=True)
@@ -163,7 +168,7 @@ class RefinementAE(pl.LightningModule):
         if optimizer_idx == 1:
             # discriminator
             discloss, log_dict_disc = self.loss(x, xrec, optimizer_idx, self.global_step,
-                                            last_layer=self.get_last_layer(), split="train")
+                                            mask=mask, last_layer=self.get_last_layer(), split="train")
             self.log("train/discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=True)
             return discloss
@@ -172,10 +177,10 @@ class RefinementAE(pl.LightningModule):
         x = self.get_input(batch, self.image_key)
         xrec, mask, _ = self(batch)
         aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+                                            mask=mask, last_layer=self.get_last_layer(), split="val")
 
         discloss, log_dict_disc = self.loss(x, xrec, 1, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+                                            mask=mask, last_layer=self.get_last_layer(), split="val")
         rec_loss = log_dict_ae["val/rec_loss"]
         self.log("val/rec_loss", rec_loss,
                    prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
@@ -190,10 +195,10 @@ class RefinementAE(pl.LightningModule):
         x = self.get_input(batch, self.image_key)
         xrec, mask, _ = self(batch)
         aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+                                            mask=mask, last_layer=self.get_last_layer(), split="val")
 
         discloss, log_dict_disc = self.loss(x, xrec, 1, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+                                            mask=mask, last_layer=self.get_last_layer(), split="val")
         rec_loss = log_dict_ae["val/rec_loss"]
         self.log("val/rec_loss", rec_loss,
                    prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
@@ -254,3 +259,184 @@ class RefinementAE(pl.LightningModule):
         x = 2.*(x-x.min())/(x.max()-x.min()) - 1.
         return x
 
+
+import torch.distributions as Dist
+import copy
+
+class RefinementDecoder(pl.LightningModule):
+    '''
+        Refinement model for the VQGAN model:
+            noise modeling based on vector quantized latent codes from a pretrained VQGAN model
+    '''
+
+    def __init__(self,
+                 first_stage_config,
+                 lossconfig,
+                 n_embed,
+                 embed_dim,
+                 ckpt_path=None,
+                 ignore_keys=[],
+                 image_key="image",
+                 colorize_nlabels=None,
+                 monitor=None,
+                 remap=None,
+                 sane_index_shape=False,  # tell vector quantizer to return indices as bhw
+                 ):
+        super().__init__()
+        self.image_key = image_key
+        self.init_first_stage_from_ckpt(first_stage_config)
+        self.init_noise_sampler()
+        # self.decoder = Decoder(**ddconfig)
+        self.loss = instantiate_from_config(lossconfig)
+
+        if ckpt_path is not None:
+            self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
+
+        self.image_key = image_key
+        if colorize_nlabels is not None:
+            assert type(colorize_nlabels)==int
+            self.register_buffer("colorize", torch.randn(3, colorize_nlabels, 1, 1))
+        if monitor is not None:
+            self.monitor = monitor
+
+    def init_from_ckpt(self, path, ignore_keys=list()):
+        sd = torch.load(path, map_location="cpu")["state_dict"]
+        keys = list(sd.keys())
+        for k in keys:
+            for ik in ignore_keys:
+                if k.startswith(ik):
+                    print("Deleting key {} from state_dict.".format(k))
+                    del sd[k]
+        self.load_state_dict(sd, strict=False)
+        print(f"Restored from {path}")
+
+    def init_first_stage_from_ckpt(self, config):
+        model = instantiate_from_config(config)
+        self.post_quant_conv = copy.deepcopy(model.post_quant_conv)
+        self.decoder = copy.deepcopy(model.decoder)
+        model = model.eval()
+        model.train = disabled_train
+        self.first_stage_model = model
+
+    def init_noise_sampler(self):
+        embeddings = self.first_stage_model.quantize.embedding.weight.data
+        L, D = embeddings.shape
+        # very experimental here
+        k = 1.5
+        bias = (embeddings.max(0)[0] - embeddings.min(0)[0]) / (L-1) # D-vector for uniform range
+        self.noise_dist = Dist.uniform.Uniform(-k*bias, k*bias)
+
+    def forward(self, x):
+        quant, _, info = self.first_stage_model.encode(x)
+        B, C, H, W = quant.shape
+        noise = self.noise_dist.sample([B,H,W]).permute(0,3,1,2)
+        quant = quant + noise.to(quant.device)
+        quant = self.post_quant_conv(quant)
+        dec, _ = self.decoder(quant)
+        return dec
+
+    def get_input(self, batch, k):
+        x = batch[k]
+        if len(x.shape) == 3:
+            x = x[..., None]
+        x = x.permute(0, 3, 1, 2).to(memory_format=torch.contiguous_format)
+        return x.float()
+
+    def training_step(self, batch, batch_idx, optimizer_idx):
+        x = self.get_input(batch, self.image_key)
+        xrec = self(x)
+        if optimizer_idx == 0:
+            # autoencode
+            aeloss, log_dict_ae = self.loss(x, xrec, optimizer_idx, self.global_step,
+                                            last_layer=self.get_last_layer(), split="train")
+
+            self.log("train/aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
+            self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=True)
+            return aeloss
+
+        if optimizer_idx == 1:
+            # discriminator
+            discloss, log_dict_disc = self.loss(x, xrec, optimizer_idx, self.global_step,
+                                            last_layer=self.get_last_layer(), split="train")
+            self.log("train/discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
+            self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=True)
+            return discloss
+
+    def validation_step(self, batch, batch_idx):
+        x = self.get_input(batch, self.image_key)
+        xrec = self(x)
+        aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
+                                            last_layer=self.get_last_layer(), split="val")
+
+        discloss, log_dict_disc = self.loss(x, xrec, 1, self.global_step,
+                                            last_layer=self.get_last_layer(), split="val")
+        rec_loss = log_dict_ae["val/rec_loss"]
+        self.log("val/rec_loss", rec_loss,
+                   prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val/aeloss", aeloss,
+                   prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
+        self.log_dict(log_dict_ae)
+        self.log_dict(log_dict_disc)
+        return self.log_dict
+
+    def test_step(self, batch, batch_idx):
+        from PIL import Image
+        x = self.get_input(batch, self.image_key)
+        xrec = self(x)
+        aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
+                                            last_layer=self.get_last_layer(), split="val")
+
+        discloss, log_dict_disc = self.loss(x, xrec, 1, self.global_step,
+                                            last_layer=self.get_last_layer(), split="val")
+        rec_loss = log_dict_ae["val/rec_loss"]
+        self.log("val/rec_loss", rec_loss,
+                   prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("val/aeloss", aeloss,
+                   prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
+        self.log_dict(log_dict_ae)
+        self.log_dict(log_dict_disc)
+        self.debug_log_image(x, batch_idx, tag='gt')
+        self.debug_log_image(xrec, batch_idx)
+        return self.log_dict
+
+    def debug_log_image(self, rec, idx, tag="recon"):
+        nb = rec.shape[0]
+        rec = torch.clamp(rec, min=-1.0, max=1.0)
+        rec = 2 * (rec - rec.min()) / (rec.max() - rec.min()) - 1
+        for i in range(nb):
+            img = rec[i].cpu().detach().numpy().transpose(1,2,0)
+            write_images(os.path.join("logs/eval", f"{tag}_{idx}_{i}.png"), img)
+
+    def configure_optimizers(self):
+        lr = self.learning_rate
+        opt_ae = torch.optim.Adam(list(self.decoder.parameters())+
+                                  list(self.post_quant_conv.parameters()),
+                                  lr=lr, betas=(0.5, 0.9))
+        opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(),
+                                    lr=lr, betas=(0.5, 0.9))
+        return [opt_ae, opt_disc], []
+
+    def get_last_layer(self):
+        return self.decoder.conv_out.weight
+
+    def log_images(self, batch, **kwargs):
+        log = dict()
+        x = self.get_input(batch, self.image_key)
+        x = x.to(self.device)
+        xrec = self(x)
+        if x.shape[1] > 3:
+            # colorize with random projection
+            assert xrec.shape[1] > 3
+            x = self.to_rgb(x)
+            xrec = self.to_rgb(xrec)
+        log["inputs"] = x
+        log["reconstructions"] = xrec
+        return log
+
+    def to_rgb(self, x):
+        assert self.image_key == "segmentation"
+        if not hasattr(self, "colorize"):
+            self.register_buffer("colorize", torch.randn(3, x.shape[1], 1, 1).to(x))
+        x = F.conv2d(x, weight=self.colorize)
+        x = 2.*(x-x.min())/(x.max()-x.min()) - 1.
+        return x

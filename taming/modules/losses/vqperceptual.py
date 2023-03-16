@@ -36,13 +36,14 @@ class PIPSWithDiscriminator(nn.Module):
     '''
     def __init__(self, disc_start,  pixelloss_weight=1.0,
                  disc_num_layers=3, disc_in_channels=3, disc_factor=1.0, disc_weight=1.0,
-                 perceptual_weight=1.0, use_actnorm=False, disc_conditional=False,
+                 perceptual_weight=1.0, r1_weight=1.0, use_actnorm=False, disc_conditional=False,
                  disc_ndf=64, perceptual_filter=None, disc_loss="hinge"):
         super().__init__()
         assert disc_loss in ["hinge", "vanilla"]
         self.pixel_weight = pixelloss_weight
         self.perceptual_loss = LPIPS(filt=perceptual_filter).eval()
         self.perceptual_weight = perceptual_weight
+        self.r1_weight = r1_weight
         self.discriminator = NLayerDiscriminator(input_nc=disc_in_channels,
                                                  n_layers=disc_num_layers,
                                                  use_actnorm=use_actnorm,
@@ -74,8 +75,9 @@ class PIPSWithDiscriminator(nn.Module):
         return d_weight
 
     def forward(self, inputs, reconstructions, optimizer_idx,
-                global_step, last_layer=None, cond=None, split="train"):
+                global_step, mask=None, last_layer=None, cond=None, split="train"):
         rec_loss = torch.abs(inputs.contiguous() - reconstructions.contiguous())
+
         if self.perceptual_weight > 0:
             p_loss = self.perceptual_loss(inputs.contiguous(), reconstructions.contiguous())
             rec_loss = self.pixel_weight * rec_loss + self.perceptual_weight * p_loss
@@ -85,6 +87,10 @@ class PIPSWithDiscriminator(nn.Module):
         nll_loss = rec_loss
         #nll_loss = torch.sum(nll_loss) / nll_loss.shape[0]
         nll_loss = torch.mean(nll_loss)
+
+        if mask is not None:
+            inputs = torch.cat([mask - 0.5, inputs], dim = 1)
+            reconstructions = torch.cat([mask - 0.5, reconstructions], dim = 1)
 
         # now the GAN part
         if optimizer_idx == 0:
@@ -118,20 +124,28 @@ class PIPSWithDiscriminator(nn.Module):
 
         if optimizer_idx == 1:
             # second pass for discriminator update
+            inputs_tmp = inputs.contiguous().detach().requires_grad_(True)
+
             if cond is None:
-                logits_real = self.discriminator(inputs.contiguous().detach())
+                logits_real = self.discriminator(inputs_tmp)
                 logits_fake = self.discriminator(reconstructions.contiguous().detach())
             else:
-                logits_real = self.discriminator(torch.cat((inputs.contiguous().detach(), cond), dim=1))
+                logits_real = self.discriminator(torch.cat((inputs_tmp, cond), dim=1))
                 logits_fake = self.discriminator(torch.cat((reconstructions.contiguous().detach(), cond), dim=1))
 
             disc_factor = adopt_weight(self.disc_factor, global_step, threshold=self.discriminator_iter_start)
-            d_loss = disc_factor * self.disc_loss(logits_real, logits_fake)
+
+            # r1 regularization
+            r1_grads = torch.autograd.grad(outputs=[logits_real.sum()], inputs=[inputs_tmp], create_graph=True, only_inputs=True)[0]
+            r1_penalty = r1_grads.square().sum([1,2,3])
+            d_loss = disc_factor * self.disc_loss(logits_real, logits_fake) + self.r1_weight * r1_penalty.mean()
 
             log = {"{}/disc_loss".format(split): d_loss.clone().detach().mean(),
                    "{}/logits_real".format(split): logits_real.detach().mean(),
-                   "{}/logits_fake".format(split): logits_fake.detach().mean()
+                   "{}/logits_fake".format(split): logits_fake.detach().mean(),
+                   "{}/r1_penalty".format(split): r1_penalty.detach().mean(),
                    }
+
             return d_loss, log
 
 

@@ -12,7 +12,7 @@ from PIL import Image
 DEBUG_MODE = False
 
 class OWTBase(Dataset):
-    def __init__(self, size=None, dataroot="", multiplier=20, onehot_segmentation=False, ignore_segmentation=False,
+    def __init__(self, size=None, dataroot="", multiplier=1, onehot_segmentation=False, ignore_segmentation=False,
                  crop_size=None, force_no_crop=False, given_files=None, multiscale_factor=1.0, extension='JPG', split='train'):
         self.name = 'owt'
         self.ext = extension

@@ -26,6 +26,9 @@ class MaskGIT(pl.LightningModule):
                  first_stage_key="image",
                  cond_stage_key="depth",
                  mask_function="random_mask",
+                 mask_start_ratio=0.15,
+                 mask_end_ratio=0.5,
+                 mask_end_step=800000,
                  downsample_cond_size=-1,
                  pkeep=0.5,
                  sampling_ratio=0.1,
@@ -35,7 +38,12 @@ class MaskGIT(pl.LightningModule):
         super().__init__()
         self.be_unconditional = unconditional
         self.sos_token = sos_token
+
         self.mask_token = -1 # this needs to be hard-coded due to embedding implementation in BERT
+        self.mask_start_ratio = mask_start_ratio
+        self.mask_end_ratio = mask_end_ratio
+        self.mask_end_step = mask_end_step
+
         self.first_stage_key = first_stage_key
         self.cond_stage_key = cond_stage_key
         self.init_cond_stage_from_ckpt(cond_stage_config)
@@ -56,7 +64,7 @@ class MaskGIT(pl.LightningModule):
         self.pkeep = pkeep
 
         # todo: remove hard-coded mapping
-        self.mask_function = self.box_mask
+        self.mask_function = self.scatter_mask
         self.sampling_ratio = sampling_ratio
 
     def init_from_ckpt(self, path, ignore_keys=list()):
@@ -100,12 +108,15 @@ class MaskGIT(pl.LightningModule):
             model.train = disabled_train
             self.cond_stage_model = model
 
-    def scatter_mask(self, z_indices, p=None):
+    def mask_ratio_scheduler(self, B):
+        # lienar scheduling function
+        ratio = min(self.mask_start_ratio + B * self.global_step / self.mask_end_step, self.mask_end_ratio)
+        return ratio
 
+    def scatter_mask(self, z_indices, p=None):
         p = self.pkeep if p is None else p
         assert p <= 1 and p >= 0
-
-        mask = torch.bernoulli( p *torch.ones(z_indices.shape,
+        mask = torch.bernoulli(p *torch.ones(z_indices.shape,
                                                      device=z_indices.device))
         mask = mask.round().to(dtype=torch.int64) 
         return mask
@@ -147,10 +158,9 @@ class MaskGIT(pl.LightningModule):
         assert mask is not None or self.pkeep < 1.0 
 
         if mask is None:
-            # mask = torch.bernoulli(self.pkeep*torch.ones(z_indices.shape,
-            #                                              device=z_indices.device))
-            # mask = mask.round().to(dtype=torch.int64) 
-            mask = self.mask_function(z_indices)
+            # mask = self.mask_function(z_indices)
+            pkeep = self.mask_ratio_scheduler(x.shape[0])
+            mask = self.mask_function(z_indices, p=pkeep)
         else:
             mask = self.preprocess_mask(mask, z_indices)
 
@@ -193,9 +203,9 @@ class MaskGIT(pl.LightningModule):
         n_sample = int(x.size(1) * self.sampling_ratio)
         steps = max(1, k_unknown // n_sample) + 2
 
-        for k in range(steps):
-            callback(k)
+        while True:
             assert x.size(1) <= block_size # make sure model can see conditioning
+
 
             # break if we have no candidate left
             if mask.sum() == 0:
@@ -219,8 +229,9 @@ class MaskGIT(pl.LightningModule):
 
             # prune low confidence prediction (we are taking the top% confidence score ones and remove the rest)
             B, L, D = probs.shape
+            k = min(n_sample, 1 + mask.sum()//B) # min(max(L // steps, 4), mask.sum()//B + 1)
+            callback(k)
 
-            k = min(n_sample, mask.sum()//B) # min(max(L // steps, 4), mask.sum()//B + 1)
             # print(f"taking top {k} from the unpredicted {mask.sum()//B}")
             # import ipdb; ipdb.set_trace()
 
@@ -292,10 +303,12 @@ class MaskGIT(pl.LightningModule):
         quant_c, c_indices = self.encode_to_c(c)
         B, C, H, W = x.shape
         gH, gW = quant_z.shape[2:]
+
         if mask is None:
             mask = self.mask_function(z_indices)
         else:
             mask = self.preprocess_mask(mask, z_indices)
+
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
 
@@ -326,37 +339,30 @@ class MaskGIT(pl.LightningModule):
         B, C, H, W = x.shape
         gH, gW = quant_z.shape[2:]
 
-        # create a "half"" sample
-        mask = torch.ones(z_indices.shape, device=z_indices.device)
-        mask[:, z_indices.shape[1]//2:] = 0
-        mask = mask.to(dtype=torch.int64)
+
+        # HALF SAMPLE 
+        # mask = torch.ones(z_indices.shape, device=z_indices.device)
+        # mask[:, z_indices.shape[1]//2:] = 0
+        # mask = mask.to(dtype=torch.int64)
+        # image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
+        # r_indices = torch.full_like(z_indices, self.mask_token)
+        # z_start_indices = mask*z_indices+(1-mask)*r_indices      
+        # index_sample = self.sample(z_start_indices, c_indices,
+        #                            temperature=temperature if temperature is not None else 1.0,
+        #                            sample=True,
+        #                            top_k=top_k if top_k is not None else 100,
+        #                            callback=callback if callback is not None else lambda k: None)
+        # x_sample_half = self.decode_to_img(index_sample, quant_z.shape)
+        # # composition
+        # if composition:
+        #     x_sample_half = image_mask * x + (1 - image_mask) * x_sample_half
+        #     if self.second_stage_model is not None:
+        #         # x_sample_half = self.second_stage_model.refine(x_sample_half, image_mask)
+        #         x_sample_half, _, _ = self.second_stage_model(x, mask=image_mask)
+
+        # scatter inpainting sample
+        mask = self.scatter_mask(z_indices, p=0.35)
         image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
-
-        r_indices = torch.full_like(z_indices, self.mask_token)
-        z_start_indices = mask*z_indices+(1-mask)*r_indices      
-
-        index_sample = self.sample(z_start_indices, c_indices,
-                                   temperature=temperature if temperature is not None else 1.0,
-                                   sample=True,
-                                   top_k=top_k if top_k is not None else 100,
-                                   callback=callback if callback is not None else lambda k: None)
-        x_sample_half = self.decode_to_img(index_sample, quant_z.shape)
-
-        # composition
-        if composition:
-            x_sample_half = image_mask * x + (1 - image_mask) * x_sample_half
-            if self.second_stage_model is not None:
-                # x_sample_half = self.second_stage_model.refine(x_sample_half, image_mask)
-                x_sample_half, _, _ = self.second_stage_model(x, mask=image_mask)
-
-        # inpainting sample
-        # pkeep = 0.85
-        # mask = torch.bernoulli(pkeep*torch.ones(z_indices.shape, device=z_indices.device))
-        # mask = mask.round().to(dtype=torch.int64) 
-
-        mask = self.mask_function(z_indices, p=0.5)
-        image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
-
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
         index_sample = self.sample(z_start_indices, c_indices,
@@ -364,15 +370,19 @@ class MaskGIT(pl.LightningModule):
                                    sample=True,
                                    top_k=top_k if top_k is not None else 100,
                                    callback=callback if callback is not None else lambda k: None)
-        x_sample_nopix = self.decode_to_img(index_sample, quant_z.shape)
+        x_sample_scatter = self.decode_to_img(index_sample, quant_z.shape)
 
         # composition
         if composition:
-            x_sample_nopix = image_mask * x + (1 - image_mask) * x_sample_nopix
+            x_sample_scatter_comp = image_mask * x + (1 - image_mask) * x_sample_scatter
             if self.second_stage_model is not None:
-                x_sample_nopix = self.second_stage_model.refine(x_sample_nopix, image_mask)
+                x_sample_scatter_comp = self.second_stage_model.refine(x_sample_scatter_comp, image_mask)
 
-        # det inpainting sample
+        # det box inpainting sample
+        mask = self.box_mask(z_indices, p=0.35)
+        image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
+        r_indices = torch.full_like(z_indices, self.mask_token)
+        z_start_indices = mask*z_indices+(1-mask)*r_indices      
         index_sample = self.sample(z_start_indices, c_indices,
                                    sample=False,
                                    callback=callback if callback is not None else lambda k: None)
@@ -382,7 +392,7 @@ class MaskGIT(pl.LightningModule):
         if composition:
             x_sample_det_comp = image_mask * x + (1 - image_mask) * x_sample_det
             if self.second_stage_model is not None:
-                x_sample_det = self.second_stage_model.refine(x_sample_det, image_mask)
+                x_sample_det_comp = self.second_stage_model.refine(x_sample_det_comp, image_mask)
 
         x_masked = image_mask * x
 
@@ -422,7 +432,8 @@ class MaskGIT(pl.LightningModule):
             log["conditioning"] = c
 
         # log["samples_half"] = x_sample_half
-        # log["samples_nopix"] = x_sample_nopix
+        log["sample_scatter"] = x_sample_scatter_comp
+        log["sample_scatter_gen"] = x_sample_scatter
         log["samples_det_gen"] = x_sample_det
         log["samples_det"] = x_sample_det_comp
         log["inputs_masked"] = x_masked
