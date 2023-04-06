@@ -100,6 +100,59 @@ class Conv2dLayerPartial(nn.Module):
             return x, None
 
 
+class Conv2dLayerPartialRestrictive(nn.Module):
+    '''
+    a more restrictive version of the partial 2d conv:
+        - 
+
+    '''
+    def __init__(self,
+                 in_channels,                    # Number of input channels.
+                 out_channels,                   # Number of output channels.
+                 kernel_size,                    # Width and height of the convolution kernel.
+                 clamp_ratio     = 0.5,
+                 bias            = True,         # Apply additive bias before the activation function?
+                 activation      = 'relu',     # Activation function: 'relu', 'lrelu', etc.
+                 up              = 1,            # Integer upsampling factor.
+                 down            = 1,            # Integer downsampling factor.
+                 resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
+                 conv_clamp      = None,         # Clamp the output to +-X, None = disable clamping.
+                 trainable       = True,         # Update the weights of this layer during training?
+                 ):
+        super().__init__()
+        self.conv = Conv2dLayer(in_channels, out_channels, kernel_size, bias, activation, up, down, resample_filter,
+                                conv_clamp, trainable)
+
+        self.weight_maskUpdater = torch.ones(1, 1, kernel_size, kernel_size)
+        self.slide_winsize = kernel_size ** 2
+        self.stride = down
+        self.clamp_ratio = clamp_ratio
+        self.padding = kernel_size // 2 if kernel_size % 2 == 1 else 0
+
+    def forward(self, x, mask=None):
+        if mask is not None:
+            with torch.no_grad():
+                if self.weight_maskUpdater.type() != x.type():
+                    self.weight_maskUpdater = self.weight_maskUpdater.to(x)
+                ################
+                mask_padded = F.pad(mask, (1,1,1,1), mode='constant', value=1)
+                update_mask_padded = F.conv2d(mask_padded, self.weight_maskUpdater, bias=None, stride=self.stride, padding=0)
+                mask_ratio_padded = update_mask_padded / self.slide_winsize
+                update_mask_restrictive = (mask_ratio_padded > self.clamp_ratio).float()
+                ################
+                update_mask = F.conv2d(mask, self.weight_maskUpdater, bias=None, stride=self.stride, padding=self.padding)
+                mask_ratio = self.slide_winsize / (update_mask + 1e-8)
+                # update_mask = torch.clamp(update_mask, 0, 1)  # 0 or 1
+                # this step shrinks the mask slightly
+                mask_ratio = torch.mul(mask_ratio, update_mask_restrictive)
+
+            x = self.conv(x)
+            x = torch.mul(x, mask_ratio)
+            return x, update_mask_restrictive
+        else:
+            x = self.conv(x)
+            return x, None
+
 class WindowAttention(nn.Module):
     r""" Window based multi-head self attention (W-MSA) module with relative position bias.
     It supports both of shifted and non-shifted window.

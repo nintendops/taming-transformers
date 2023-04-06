@@ -565,7 +565,7 @@ class MatEncoder(nn.Module):
         self.resolution = resolution
         self.in_channels = in_channels
 
-        self.conv_first = MAT.Conv2dLayerPartial(in_channels=in_channels+1, out_channels=ch, kernel_size=3)       
+        self.conv_first = MAT.Conv2dLayerPartialRestrictive(clamp_ratio=0.5, in_channels=in_channels+1, out_channels=ch, kernel_size=3)       
         self.enc_conv = nn.ModuleList()
         self.enc_conv_2 = nn.ModuleList()
         self.att_layer = 2
@@ -873,7 +873,6 @@ class Decoder(nn.Module):
                                    kernel_size=3,
                                    stride=1,
                                    padding=padding)
-
         # middle
         self.mid = nn.Module()
         self.mid.block_1 = ResnetBlock(in_channels=block_in,

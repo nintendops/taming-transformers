@@ -62,8 +62,8 @@ class RefinementAE(pl.LightningModule):
         super().__init__()
         self.image_key = image_key
         decoder_model = Decoder
-        # self.encoder = MatEncoder(**ddconfig)
-        self.encoder = MaskEncoder(**ddconfig)
+        self.encoder = MatEncoder(**ddconfig)
+        # self.encoder = MaskEncoder(**ddconfig)
         self.decoder = decoder_model(**ddconfig)
         self.bottleneck_conv = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)
         self.post_bottleneck_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
