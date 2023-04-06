@@ -1,5 +1,39 @@
+import numpy as np
 import torch
 import torch.nn as nn
+
+def scatter_mask(shape, device, p):
+    p = (1 - p)
+    assert p <= 1 and p >= 0
+    mask = torch.bernoulli(p *torch.ones(shape, device=device))
+    mask = mask.round().to(dtype=torch.int64) 
+    return mask
+
+def box_mask(shape, device, p, det=False):
+    assert p <= 1 and p >= 0
+    nb = shape[0]
+    if len(shape) == 2:
+        r = int(shape[-1]**0.5)
+    else:
+        r = shape[-1]
+    mr = int(p * r)
+    mask = np.ones([nb, 1, r, r]).astype(np.int32)
+    for i in range(nb):
+        if det:
+            h = w = (r - mr) // 2
+        else:
+            h, w = np.random.randint(0, r-mr, 2)
+        mask[i, :, h:h+mr, w:w+mr] = 0
+    mask = torch.from_numpy(mask).to(device)
+    if len(shape) == 2:
+        mask = mask.reshape(nb, -1)
+    return mask
+
+def mixed_mask(shape, device, p=None, scatter_prob=0.5):
+    if np.random.rand() < scatter_prob:
+        return scatter_mask(shape, device, p)
+    else:
+        return box_mask(shape, device, p)
 
 
 def count_params(model):

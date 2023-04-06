@@ -20,6 +20,7 @@ class Places(Dataset):
         self.rescale_size = rescale_size
         self.crop_size = crop_size
         self.dataroot = dataroot
+        print(f"[Dataloader] Gathering data from {dataroot}...")
         self.initialize_paths()
         self.initialize_processor()
 
@@ -27,10 +28,13 @@ class Places(Dataset):
         data_list = []
         for root, dirs, files in os.walk(self.dataroot):
             image_files = glob.glob(os.path.join(root, "*.jpg"))
-            if len(image_files) > 0:
-                name = root.split("data_large")[-1]
-                name = "_".join(name.split('/')[2:])
-            data_list += [(path, name) for path in image_files]
+            # if len(image_files) > 0:
+            #     if self.split == 'train':
+            #         name = root.split("data_large")[-1]
+            #     else:
+            #         name = root.split("test_large")[-1]
+            #     name = "_".join(name.split('/')[2:])
+            data_list += [(path, '_'.join(path.split('/')[-3:])) for path in image_files]
         self.data_list = data_list            
 
     def initialize_processor(self):
@@ -77,7 +81,7 @@ class Places(Dataset):
                    "segmentation": segmentation,
                    "img_path": img_path,
                    "seg_path": seg_path,
-                   "name": name
+                   "filename_": name
                     }
         return example
 

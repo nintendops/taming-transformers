@@ -1,0 +1,105 @@
+model:
+  base_learning_rate: 4.5e-06
+  target: taming.models.refinement_ae.RefinementAE
+  params:
+    # ckpt_path: logs/2023-04-03T01-46-12_places256_refinement_tamencoder/checkpoints/last.ckpt
+    embed_dim: 256
+    n_embed: 8192
+    image_key: "image"
+    first_stage_model_type: 'git'
+    mask_lower: 0.25
+    mask_upper: 0.5
+    ddconfig:
+      padding_free: false
+      double_z: false
+      z_channels: 256
+      resolution: 256
+      in_channels: 3
+      out_ch: 3
+      ch: 128
+      ch_mult:
+      - 1
+      - 1
+      - 2
+      - 2
+      - 4
+      num_res_blocks: 2
+      attn_resolutions:
+      - 16
+      dropout: 0.0
+    first_stage_config:
+      target: taming.models.maskgit.MaskGIT
+      params:
+        ckpt_path: /data/Haiwei/taming_ckpts/2023-03-30T07-32-55_places256_maskgit_abs_sep_cont/checkpoints/last.ckpt
+        cond_stage_key: segmentation
+        mask_scheduler: cosine
+        sampling_ratio: 0.2
+        transformer_config:
+          target: taming.modules.transformer.mingpt.GPT
+          params:
+            vocab_size: 8193
+            block_size: 512  # 257
+            n_layer: 24 # 24,40
+            n_head: 16
+            n_embd: 1408
+            embd_pdrop: 0.1
+            resid_pdrop: 0.1
+            attn_pdrop: 0.1
+        first_stage_config:
+          target: taming.models.vqgan.VQModel
+          params:
+            ckpt_path: logs/places256_vqgan_BASE/checkpoints/last.ckpt
+            embed_dim: 256
+            n_embed: 8192
+            ddconfig:
+              padding_free: false
+              double_z: false
+              z_channels: 256
+              resolution: 256
+              in_channels: 3
+              out_ch: 3
+              ch: 128
+              ch_mult:
+              - 1
+              - 1
+              - 2
+              - 2
+              - 4
+              num_res_blocks: 2
+              attn_resolutions:
+              - 16
+              dropout: 0.0
+            lossconfig:
+              target: taming.modules.losses.DummyLoss
+        cond_stage_config: "__is_unconditional__"
+    lossconfig:
+      target: taming.modules.losses.vqperceptual.PIPSWithDiscriminator
+      params:
+        pixelloss_weight: 1.0
+        perceptual_weight: 1.0
+        r1_weight: 0.0
+        disc_conditional: False
+        disc_in_channels: 4 # 3 + 256
+        disc_start: 1
+        disc_weight: 0.8
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 10
+    train:
+      target: taming.data.places365.Places
+      params:
+        dataroot: /data/Haiwei/Datasets/Places365/data_large
+        crop_size: 256
+        rescale: True
+        rescale_size: 256
+        split: 'train'
+    test:
+      target: taming.data.places365.Places
+      params:
+        dataroot: /data/Haiwei/Datasets/Places365/test_large
+        crop_size: 256
+        rescale: True
+        rescale_size: 256
+        split: 'test'
+

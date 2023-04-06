@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from taming.modules.diffusionmodules.core_layers import Conv2dBlock as ConvBlock
-
+import taming.modules.diffusionmodules.mat as MAT
 
 def get_timestep_embedding(timesteps, embedding_dim):
     """
@@ -428,6 +428,7 @@ class Encoder(nn.Module):
 
         # downsampling
         hs = [self.conv_in(x)]
+
         for i_level in range(self.num_resolutions):
             for i_block in range(self.num_res_blocks):
                 h = self.down[i_level].block[i_block](hs[-1], temb)
@@ -448,6 +449,222 @@ class Encoder(nn.Module):
         h = nonlinearity(h)
         h = self.conv_out(h)
         return h
+
+
+
+class MaskEncoder(nn.Module):
+    def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks,
+                 attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
+                 resolution, z_channels, double_z=True, **ignore_kwargs):
+        super().__init__()
+        self.ch = ch
+        self.temb_ch = 0
+        self.num_resolutions = len(ch_mult)
+        self.num_res_blocks = num_res_blocks
+        self.resolution = resolution
+        self.in_channels = in_channels + 1
+
+        # downsampling
+        self.conv_in = torch.nn.Conv2d(self.in_channels,
+                                       self.ch,
+                                       kernel_size=3,
+                                       stride=1,
+                                       padding=1)
+
+        curr_res = resolution
+        in_ch_mult = (1,)+tuple(ch_mult)
+        self.down = nn.ModuleList()
+        for i_level in range(self.num_resolutions):
+            block = nn.ModuleList()
+            attn = nn.ModuleList()
+            block_in = ch*in_ch_mult[i_level]
+            block_out = ch*ch_mult[i_level]
+            for i_block in range(self.num_res_blocks):
+                block.append(ResnetBlock(in_channels=block_in,
+                                         out_channels=block_out,
+                                         temb_channels=self.temb_ch,
+                                         dropout=dropout))
+                block_in = block_out
+                if curr_res in attn_resolutions:
+                    attn.append(AttnBlock(block_in))
+            down = nn.Module()
+            down.block = block
+            down.attn = attn
+            if i_level != self.num_resolutions-1:
+                down.downsample = Downsample(block_in, resamp_with_conv)
+                curr_res = curr_res // 2
+            self.down.append(down)
+
+        # middle
+        self.mid = nn.Module()
+        self.mid.block_1 = ResnetBlock(in_channels=block_in,
+                                       out_channels=block_in,
+                                       temb_channels=self.temb_ch,
+                                       dropout=dropout)
+        self.mid.attn_1 = AttnBlock(block_in)
+        self.mid.block_2 = ResnetBlock(in_channels=block_in,
+                                       out_channels=block_in,
+                                       temb_channels=self.temb_ch,
+                                       dropout=dropout)
+
+        # end
+        self.norm_out = Normalize(block_in)
+        self.conv_out = torch.nn.Conv2d(block_in,
+                                        2*z_channels if double_z else z_channels,
+                                        kernel_size=3,
+                                        stride=1,
+                                        padding=1)
+
+
+    def forward(self, x, masks_in):
+
+        masks_in = masks_in.float()
+        x = torch.cat([masks_in - 0.5, x * masks_in], dim=1)
+
+        # timestep embedding
+        temb = None
+
+        # downsampling
+        hs = [self.conv_in(x)]
+
+        for i_level in range(self.num_resolutions):
+            for i_block in range(self.num_res_blocks):
+                h = self.down[i_level].block[i_block](hs[-1], temb)
+                if len(self.down[i_level].attn) > 0:
+                    h = self.down[i_level].attn[i_block](h)
+                hs.append(h)
+            if i_level != self.num_resolutions-1:
+                hs.append(self.down[i_level].downsample(hs[-1]))
+
+        # middle
+        h = hs[-1]
+        h = self.mid.block_1(h, temb)
+        h = self.mid.attn_1(h)
+        h = self.mid.block_2(h, temb)
+
+        # end
+        h = self.norm_out(h)
+        h = nonlinearity(h)
+        h = self.conv_out(h)
+
+        H1, W1 = masks_in.shape[-2:]
+        H2, W2 = h.shape[-2:]
+        mask_out = torch.nn.functional.interpolate(masks_in, scale_factor=H2/H1)
+        return h, mask_out
+
+
+class MatEncoder(nn.Module):
+    def __init__(self, *, ch, out_ch, ch_mult=(1,1,2,2,4), num_res_blocks,
+                 attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
+                 resolution, z_channels, double_z=True, **ignore_kwargs):
+        super().__init__()
+
+        self.ch = ch
+        self.num_resolutions = len(ch_mult)
+        self.num_res_blocks = num_res_blocks
+        self.resolution = resolution
+        self.in_channels = in_channels
+
+        self.conv_first = MAT.Conv2dLayerPartial(in_channels=in_channels+1, out_channels=ch, kernel_size=3)       
+        self.enc_conv = nn.ModuleList()
+        self.enc_conv_2 = nn.ModuleList()
+        self.att_layer = 2
+        in_ch_mult = (1,)+tuple(ch_mult)
+
+        for i_level in range(self.att_layer):
+            block_in = ch*in_ch_mult[i_level]
+            block_out = ch*ch_mult[i_level]
+            self.enc_conv.append(
+                MAT.Conv2dLayerPartial(in_channels=block_in, out_channels=block_out, kernel_size=3, down=2)
+            )
+
+        # from 64 -> 16 -> 64
+        res = resolution // 2**(self.num_resolutions - self.att_layer - 1)
+        dim = block_out
+        depths = [2, 3, 4, 3, 2]
+        ratios = [1, 1/2, 1/2, 2, 2]
+        num_heads = 8
+        window_sizes =  [8, 16, 16, 16, 8] # [8, 16, 16, 16, 8] or [2,4,4,4,2]
+        drop_path_rate = 0.1
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
+
+        self.tran = nn.ModuleList()
+        for i, depth in enumerate(depths):
+            res = int(res * ratios[i])
+            if ratios[i] < 1:
+                merge = MAT.PatchMerging(dim, dim, down=int(1/ratios[i]))
+            elif ratios[i] > 1:
+                merge = MAT.PatchUpsampling(dim, dim, up=ratios[i])
+            else:
+                merge = None
+            self.tran.append(
+                MAT.BasicLayer(dim=dim, input_resolution=[res, res], depth=depth, num_heads=num_heads,
+                               window_size=window_sizes[i], drop_path=dpr[sum(depths[:i]):sum(depths[:i + 1])],
+                               downsample=merge)
+            )
+
+
+        for i_level in range(self.num_resolutions - self.att_layer):
+            block_in = ch*in_ch_mult[self.att_layer + i_level]
+            block_out = ch*ch_mult[self.att_layer + i_level]
+            if i_level != self.num_resolutions - self.att_layer - 1:
+                self.enc_conv_2.append(
+                    MAT.Conv2dLayerPartial(in_channels=block_in, out_channels=block_out, kernel_size=3, down=2)
+                )
+            else:
+                self.enc_conv_2.append(
+                    MAT.Conv2dLayerPartial(in_channels=block_in, out_channels=block_out, kernel_size=3)
+                )
+
+
+        # end
+        self.norm_out = Normalize(block_out)
+        self.conv_out = torch.nn.Conv2d(block_out,
+                                        2*z_channels if double_z else z_channels,
+                                        kernel_size=3,
+                                        stride=1,
+                                        padding=1)
+
+
+    def forward(self, images_in, masks_in):
+        masks_in = masks_in.float()
+        x = torch.cat([masks_in - 0.5, images_in * masks_in], dim=1)
+        skips = []
+        x, mask = self.conv_first(x, masks_in)  # input size
+        skips.append(x)
+        for i, block in enumerate(self.enc_conv):  
+            x, mask = block(x, mask)
+            if i != len(self.enc_conv) - 1:
+                skips.append(x)
+        x_size = x.size()[-2:]
+        # mask_size = mask.size()[-2:]
+        mask_out = mask
+
+        x = MAT.feature2token(x)
+        mask = MAT.feature2token(mask)
+        mid = len(self.tran) // 2
+        for i, block in enumerate(self.tran):  # 64 to 16
+            if i < mid:
+                x, x_size, mask = block(x, x_size, mask)
+                skips.append(x)
+            else:
+                x, x_size, _ = block(x, x_size, None)
+                if i > mid:
+                    x = x + skips[mid - i]
+
+        x = MAT.token2feature(x, x_size).contiguous()
+        mask = mask_out
+        # mid
+        for i, block in enumerate(self.enc_conv_2):  
+            x, mask = block(x, mask)
+
+        # end
+        x = self.norm_out(x)
+        x = nonlinearity(x)
+        x = self.conv_out(x)
+        return x, mask
+
+
 
 ###########################################################################
 class mlpDecoder(nn.Module):

@@ -2,15 +2,15 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.maskgit.MaskGIT
   params:
-    ckpt_path: /data/Haiwei/taming_ckpts/places_256_maskgit_BASE/checkpoints/last.ckpt
+    ckpt_path: /data/Haiwei/taming_ckpts/2023-03-30T07-32-55_places256_maskgit_abs_sep_cont/checkpoints/last.ckpt
     cond_stage_key: segmentation
-    sampling_ratio: 0.1
+    sampling_ratio: 0.2
     transformer_config:
       target: taming.modules.transformer.mingpt.GPT
       params:
         vocab_size: 8193
-        block_size: 512  # = 256 + 256 = dim(vqgan_latent_space,16x16) 
-        n_layer: 40 # 24,40
+        block_size: 512  # 257
+        n_layer: 24 # 24,40
         n_head: 16
         n_embd: 1408
         embd_pdrop: 0.1
@@ -19,7 +19,7 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/places_256_vqgan_BASEMODEL/checkpoints/last.ckpt
+        ckpt_path: logs/2023-03-30T02-43-38_places256_vqgan_cont/checkpoints/last.ckpt
         embed_dim: 256
         n_embed: 8192
         ddconfig:
@@ -47,7 +47,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 2
+    batch_size: 12
     train:
       target: taming.data.places365.Places
       params:
@@ -56,3 +56,11 @@ data:
         rescale: True
         rescale_size: 256
         split: 'train'
+    test:
+      target: taming.data.places365.Places
+      params:
+        dataroot: /data/Haiwei/Datasets/Places365/test_large
+        crop_size: 256
+        rescale: True
+        rescale_size: 256
+        split: 'test'

@@ -139,7 +139,7 @@ if __name__ == '__main__':
         dataset = data.datasets['train']
 
     dataset_iter = iter(data._train_dataloader())
-    data_select = range(len(dataset))
+    data_select = range(100) # range(len(dataset))
 
     if opt.mode == 'transformer':
         eval_method = eval_transformer_log

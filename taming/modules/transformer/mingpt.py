@@ -66,7 +66,7 @@ class CausalSelfAttention(nn.Module):
         self.register_buffer("mask", mask.view(1, 1, config.block_size, config.block_size))
         self.n_head = config.n_head
 
-    def forward(self, x, layer_past=None):
+    def forward(self, x, autoregressive=True, layer_past=None, mask=None):
         B, T, C = x.size()
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -82,8 +82,16 @@ class CausalSelfAttention(nn.Module):
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        if layer_past is None:
+
+        if autoregressive:
             att = att.masked_fill(self.mask[:,:,:T,:T] == 0, float('-inf'))
+
+        if not autoregressive and mask is not None:
+            mask_diag = mask.unsqueeze(1).unsqueeze(1).expand(-1,-1,T,-1)
+            eyes = torch.eye(T)[None,None].expand(B,-1,-1,-1).to(mask.device)
+            mask_diag = torch.logical_or(mask_diag,eyes).int()
+            # mask_tiled = torch.tile(mask.unsqueeze(1), (1,att.shape[1],1))
+            att = att.masked_fill(mask_diag == 0, float('-inf'))
 
         att = F.softmax(att, dim=-1)
         att = self.attn_drop(att)
@@ -109,11 +117,11 @@ class Block(nn.Module):
             nn.Dropout(config.resid_pdrop),
         )
 
-    def forward(self, x, layer_past=None, return_present=False):
+    def forward(self, x, autoregressive=True, layer_past=None, return_present=False, mask=None):
         # TODO: check that training still works
         if return_present: assert not self.training
         # layer past: tuple of length two with B, nh, T, hs
-        attn, present = self.attn(self.ln1(x), layer_past=layer_past)
+        attn, present = self.attn(self.ln1(x), autoregressive=autoregressive, layer_past=layer_past, mask=mask)
 
         x = x + attn
         x = x + self.mlp(self.ln2(x))
@@ -136,7 +144,7 @@ class GPT(nn.Module):
         self.pos_emb = nn.Parameter(torch.zeros(1, config.block_size, config.n_embd))
         self.drop = nn.Dropout(config.embd_pdrop)
         # transformer
-        self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
+        self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         # decoder head
         self.ln_f = nn.LayerNorm(config.n_embd)
         self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
@@ -157,10 +165,9 @@ class GPT(nn.Module):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-    def forward(self, idx, embeddings=None, targets=None):
+    def forward(self, idx, embeddings=None, targets=None, mask=None, autoregressive=True):
         # forward the GPT model
         token_embeddings = self.tok_emb(idx) # each index maps to a (learnable) vector
-
         if embeddings is not None: # prepend explicit embeddings
             token_embeddings = torch.cat((embeddings, token_embeddings), dim=1)
 
@@ -169,7 +176,8 @@ class GPT(nn.Module):
         position_embeddings = self.pos_emb[:, :t, :] # each position maps to a (learnable) vector
 
         x = self.drop(token_embeddings + position_embeddings)
-        x = self.blocks(x)
+        for block in self.blocks:
+            x = block(x, autoregressive=autoregressive, mask=mask)
         x = self.ln_f(x)
         logits = self.head(x)
 

@@ -4,9 +4,10 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import cv2
 import numpy as np
+import random
 from main import instantiate_from_config
-
-from taming.modules.diffusionmodules.model import Encoder, Decoder, RestrictedDecoder
+from taming.modules.util import scatter_mask, box_mask, mixed_mask
+from taming.modules.diffusionmodules.model import Encoder, Decoder, MatEncoder, MaskEncoder
 from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 from taming.modules.vqvae.quantize import GumbelQuantize
 from taming.modules.vqvae.quantize import EMAVectorQuantizer
@@ -25,14 +26,15 @@ def write_images(path, image, n_row=1):
             image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
     cv2.imwrite('{}'.format(str(path)), np.squeeze(image))
 
-# mask functions
-def box_mask(r, mr, nb, device):
-    assert mr <= r
-    mask = np.ones([nb, 1, r, r]).astype(np.int32)
-    for i in range(nb):
-        h, w = np.random.randint(0, r-mr, 2)
-        mask[i, :, h:h+mr, w:w+mr] = 0
-    return torch.from_numpy(mask).to(device)
+def to_categorical(code, n_label):
+    '''
+        input: L length vector
+        return: (L, N) onehot vectors
+    '''
+    assert code.max() < n_label
+    onehot = torch.zeros([code.size(0), n_label], dtype=bool)
+    onehot[np.arange(code.size(0)), code] = True
+    return onehot.float().to(code.device)
 
 class RefinementAE(pl.LightningModule):
     '''
@@ -45,6 +47,9 @@ class RefinementAE(pl.LightningModule):
                  lossconfig,
                  n_embed,
                  embed_dim,
+                 mask_lower = 0.25,
+                 mask_upper = 0.75,
+                 first_stage_model_type='vae',
                  ckpt_path=None,
                  ignore_keys=[],
                  image_key="image",
@@ -56,13 +61,15 @@ class RefinementAE(pl.LightningModule):
                  ):
         super().__init__()
         self.image_key = image_key
-        decoder_model = RestrictedDecoder if restriction else Decoder
-        self.init_first_stage_from_ckpt(first_stage_config)
-        self.encoder = Encoder(**ddconfig)
+        decoder_model = Decoder
+        # self.encoder = MatEncoder(**ddconfig)
+        self.encoder = MaskEncoder(**ddconfig)
         self.decoder = decoder_model(**ddconfig)
-        self.loss = instantiate_from_config(lossconfig)
         self.bottleneck_conv = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)
         self.post_bottleneck_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
+        self.loss = instantiate_from_config(lossconfig)
+        self.first_stage_model_type = first_stage_model_type
+        self.init_first_stage_from_ckpt(first_stage_config)
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
         self.image_key = image_key
@@ -71,7 +78,10 @@ class RefinementAE(pl.LightningModule):
             self.register_buffer("colorize", torch.randn(3, colorize_nlabels, 1, 1))
         if monitor is not None:
             self.monitor = monitor
-        mask = None
+
+        self.mask_function = box_mask
+        self.mask_lower = mask_lower
+        self.mask_upper = mask_upper
 
     def init_from_ckpt(self, path, ignore_keys=list()):
         sd = torch.load(path, map_location="cpu")["state_dict"]
@@ -84,17 +94,20 @@ class RefinementAE(pl.LightningModule):
         self.load_state_dict(sd, strict=False)
         print(f"Restored from {path}")
 
-    def init_first_stage_from_ckpt(self, config):
+    def init_first_stage_from_ckpt(self, config, initialize_decoder=False):
         model = instantiate_from_config(config)
         model = model.eval()
         model.train = disabled_train
         self.first_stage_model = model
+        if initialize_decoder:
+            self.post_bottleneck_conv = copy.deepcopy(model.post_quant_conv)
+            self.decoder = copy.deepcopy(model.decoder)
 
-    def encode(self, x):
+    def encode(self, x, mask):
         # encode the composited image
-        h = self.encoder(x)
+        h, mask_out = self.encoder(x, mask)
         h = self.bottleneck_conv(h)
-        return h
+        return h, mask_out
 
     def decode(self, h):
         h = self.post_bottleneck_conv(h)
@@ -117,30 +130,44 @@ class RefinementAE(pl.LightningModule):
 
         # first, get a composition of quantized reconstruction and the original image
         if mask is None:
-            mask = self.get_mask([input.shape[0], 1, input.shape[2], input.shape[3]], input.device)
+            mask = self.get_mask_eval([input.shape[0], 1, input.shape[2], input.shape[3]], input.device)
         
         # enable this if first stage model is an VQ autoencoder
         # x_fstg, _ = self.first_stage_model(input)
+
+        if self.first_stage_model_type == 'vae':
+            quant, _, info = self.first_stage_model.encode(input)
+        else:
+            x_fstg, quant = self.first_stage_model.forward_with_recon(batch, return_quant=True)
+
+        # _, _, codes = info
+        B, C, H, W = quant.shape
         
         # enable this if first stage model is a maskGIT transformer
-        x_fstg = self.first_stage_model.forward_with_recon(batch, mask=mask)
-        x_comp = mask * input + (1 - mask) * x_fstg
-        x_in = torch.cat([mask - 0.5, x_comp], dim=1)
+        # x_fstg = self.first_stage_model.forward_with_recon(batch, mask=mask)
+            
+        # x_comp = mask * input + (1 - mask) * x_fstg
+        # x_in = torch.cat([mask - 0.5, x_comp], dim=1)
 
-        h = self.encode(x_in)
-        dec = self.decode(h)
+        h, mask_out = self.encode(input, mask)
+        h = h + quant * ( 1 - mask_out)
+        dec = self.decode(h)       
+        dec = mask * input + (1 - mask) * dec
+
+        # for comparison only
+        if self.first_stage_model_type == 'vae':
+            x_fstg, _ = self.first_stage_model(input)
         
-        if composition:
-            dec = mask * input + (1 - mask) * dec
+        x_comp = mask * input + (1 - mask) * x_fstg
 
         return dec, mask, x_comp
 
-    def refine(self, x, mask=None):
-        dec = self.decode(self.encode(x))
-        if mask is not None:
-            return mask * x + (1-mask) * dec
-        else:
-            return dec
+    # def refine(self, x, mask=None):
+    #     dec = self.decode(self.encode(x))
+    #     if mask is not None:
+    #         return mask * x + (1-mask) * dec
+    #     else:
+    #         return dec
 
     def get_input(self, batch, k):
         x = batch[k]
@@ -150,8 +177,11 @@ class RefinementAE(pl.LightningModule):
         return x.float().to(self.device)
 
     def get_mask(self, shape, device):
-        B, _, H, W = shape
-        return box_mask(H, H//2, B, device)
+        p = random.uniform(self.mask_lower, self.mask_upper)
+        return box_mask(shape, device, p)
+
+    def get_mask_eval(self, shape, device):
+        return box_mask(shape, device, 0.5, det=True)
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         x = self.get_input(batch, self.image_key)
@@ -285,8 +315,10 @@ class RefinementDecoder(pl.LightningModule):
         super().__init__()
         self.image_key = image_key
         self.init_first_stage_from_ckpt(first_stage_config)
-        self.init_noise_sampler()
-        # self.decoder = Decoder(**ddconfig)
+        self.init_noise_sampler()     
+        ddconfig = first_stage_config.params.ddconfig
+        self.decoder = Decoder(**ddconfig)
+        self.post_quant_conv = torch.nn.Conv2d(2 * embed_dim, ddconfig["z_channels"], 1)
         self.loss = instantiate_from_config(lossconfig)
 
         if ckpt_path is not None:
@@ -312,28 +344,36 @@ class RefinementDecoder(pl.LightningModule):
 
     def init_first_stage_from_ckpt(self, config):
         model = instantiate_from_config(config)
-        self.post_quant_conv = copy.deepcopy(model.post_quant_conv)
-        self.decoder = copy.deepcopy(model.decoder)
+        # self.post_quant_conv = copy.deepcopy(model.post_quant_conv)
+        # self.decoder = copy.deepcopy(model.decoder)
         model = model.eval()
         model.train = disabled_train
         self.first_stage_model = model
 
     def init_noise_sampler(self):
+        ###### very experimental here ###################
         embeddings = self.first_stage_model.quantize.embedding.weight.data
         L, D = embeddings.shape
-        # very experimental here
-        k = 1.5
-        bias = (embeddings.max(0)[0] - embeddings.min(0)[0]) / (L-1) # D-vector for uniform range
-        self.noise_dist = Dist.uniform.Uniform(-k*bias, k*bias)
+        # k = 1.5
+        # bias = (embeddings.max(0)[0] - embeddings.min(0)[0]) / (L-1) # D-vector for uniform range
+        # self.noise_dist = Dist.uniform.Uniform(-k*bias, k*bias)
+        ##################################################
+        self.noise_dist = Dist.uniform.Uniform(torch.full([D],-1.0), torch.full([D],1.0))
 
     def forward(self, x):
         quant, _, info = self.first_stage_model.encode(x)
+        _, _, codes = info
         B, C, H, W = quant.shape
-        noise = self.noise_dist.sample([B,H,W]).permute(0,3,1,2)
-        quant = quant + noise.to(quant.device)
+        N = self.first_stage_model.quantize.n_e
+        # codes_onehot = to_categorical(codes, N).reshape(B, H, W, N).permute(0,3,1,2).contiguous()
+        # code_grid = codes.reshape(quant.shape[0],quant.shape[2],quant.shape[3])
+        quant_embeddings = quant
+        noise = self.noise_dist.sample([B,H,W]).permute(0,3,1,2).to(quant.device)
+        # quant = quant + noise.to(quant.device)
+        quant = torch.cat([noise, quant], dim=1)
         quant = self.post_quant_conv(quant)
         dec, _ = self.decoder(quant)
-        return dec
+        return dec, quant_embeddings, noise
 
     def get_input(self, batch, k):
         x = batch[k]
@@ -344,11 +384,17 @@ class RefinementDecoder(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         x = self.get_input(batch, self.image_key)
-        xrec = self(x)
+        xrec, labels, _ = self(x)
+
+        # upsampling label
+        cH, cW = labels.shape[-2:]
+        H, W = xrec.shape[-2:]
+        labels = torch.nn.functional.interpolate(labels, scale_factor=H//cH)
+        
         if optimizer_idx == 0:
             # autoencode
             aeloss, log_dict_ae = self.loss(x, xrec, optimizer_idx, self.global_step,
-                                            last_layer=self.get_last_layer(), split="train")
+                                            cond=labels, last_layer=self.get_last_layer(), split="train")
 
             self.log("train/aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=True)
@@ -357,19 +403,19 @@ class RefinementDecoder(pl.LightningModule):
         if optimizer_idx == 1:
             # discriminator
             discloss, log_dict_disc = self.loss(x, xrec, optimizer_idx, self.global_step,
-                                            last_layer=self.get_last_layer(), split="train")
+                                            cond=labels, last_layer=self.get_last_layer(), split="train")
             self.log("train/discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=True)
             return discloss
 
     def validation_step(self, batch, batch_idx):
         x = self.get_input(batch, self.image_key)
-        xrec = self(x)
+        xrec, labels, _ = self(x)
         aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+                                            cond=labels, last_layer=self.get_last_layer(), split="val")
 
         discloss, log_dict_disc = self.loss(x, xrec, 1, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+                                            cond=labels, last_layer=self.get_last_layer(), split="val")
         rec_loss = log_dict_ae["val/rec_loss"]
         self.log("val/rec_loss", rec_loss,
                    prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
@@ -382,12 +428,12 @@ class RefinementDecoder(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         from PIL import Image
         x = self.get_input(batch, self.image_key)
-        xrec = self(x)
+        xrec, labels, _ = self(x)
         aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+                                            cond=labels, last_layer=self.get_last_layer(), split="val")
 
         discloss, log_dict_disc = self.loss(x, xrec, 1, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+                                            cond=labels, last_layer=self.get_last_layer(), split="val")
         rec_loss = log_dict_ae["val/rec_loss"]
         self.log("val/rec_loss", rec_loss,
                    prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
@@ -423,7 +469,7 @@ class RefinementDecoder(pl.LightningModule):
         log = dict()
         x = self.get_input(batch, self.image_key)
         x = x.to(self.device)
-        xrec = self(x)
+        xrec, labels, _ = self(x)
         if x.shape[1] > 3:
             # colorize with random projection
             assert xrec.shape[1] > 3

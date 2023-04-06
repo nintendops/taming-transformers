@@ -312,11 +312,11 @@ def eval_half(*, data, idx, model, opt, config, save_path, **ignorekwargs):
         # ---------------------------------------------------------------------------------
 
 
-def eval_transformer_log(*, data, idx, model, opt, config, save_path, **ignorekwargs):
+def eval_transformer_log(*, data, idx, model, opt, config, save_path, log_input=False, **ignorekwargs):
     batch = data
     image_name = batch['filename_']
     image_idx = idx
-    transformer = model
+    # transformer = model
     n_sample = opt.sample 
     split_generate = opt.split
     
@@ -327,8 +327,10 @@ def eval_transformer_log(*, data, idx, model, opt, config, save_path, **ignorekw
         segmentation = image
     else:
         segmentation = batch['segmentation']
-        write_images(os.path.join(save_path, f'image_{image_idx}_segmentation.png'), segmentation)
-    write_images(os.path.join(save_path, f'image_{image_idx}_src.png'), image)
+        if log_input:
+            write_images(os.path.join(save_path, f'image_{image_idx}_segmentation.png'), segmentation)
+    if log_input:
+        write_images(os.path.join(save_path, f'image_{image_idx}_src.png'), image)
     # -----------------------------------------------------------------------------
 
     codebook_size = config.model.params.first_stage_config.params.embed_dim
@@ -343,7 +345,7 @@ def eval_transformer_log(*, data, idx, model, opt, config, save_path, **ignorekw
 
     for i_sample in range(n_sample):
         print(f"Generating samples for {image_name} at sample #{i_sample}")
-        log_images = transformer.log_images(true_batch)
+        log_images = model.log_images(true_batch)
         for k in log_images.keys():
             target_image = log_images[k][0].cpu().numpy().transpose(1,2,0)
             write_images(os.path.join(save_path, f'{image_name}_sample_{i_sample}_{k}.png'), target_image)
