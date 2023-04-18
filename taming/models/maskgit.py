@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import random
 from main import instantiate_from_config
-from taming.modules.util import SOSProvider
+from taming.modules.util import SOSProvider, scatter_mask, box_mask, mixed_mask, RandomMask, BatchRandomMask
 
 
 def disabled_train(self, mode=True):
@@ -18,7 +18,7 @@ class MaskGIT(pl.LightningModule):
     def __init__(self,
                  transformer_config,
                  cond_stage_config,
-                 first_stage_config,
+                 first_stage_config=None,
                  refinement_stage_config=None,
                  permuter_config=None,
                  ckpt_path=None,
@@ -30,6 +30,7 @@ class MaskGIT(pl.LightningModule):
                  mask_start_ratio=0.15,
                  mask_end_ratio=0.75,
                  mask_end_step=600000,
+                 mask_on_latent=False,
                  downsample_cond_size=-1,
                  pkeep=0.5,
                  sampling_ratio=0.1,
@@ -40,28 +41,35 @@ class MaskGIT(pl.LightningModule):
         super().__init__()
         self.be_unconditional = unconditional
         self.sos_token = sos_token
+        ##########################################
         self.attention_extent = attention_extent
         self.mask_token = -1 # this needs to be hard-coded due to embedding implementation in BERT
         self.mask_start_ratio = mask_start_ratio
         self.mask_end_ratio = mask_end_ratio
         self.mask_end_step = mask_end_step
         self.mask_scheduler = mask_scheduler
+        self.mask_on_latent = mask_on_latent
+        ##########################################
         self.first_stage_key = first_stage_key
         self.cond_stage_key = cond_stage_key
-        self.init_cond_stage_from_ckpt(cond_stage_config)
-
-        if refinement_stage_config is None:
-            self.init_first_stage_from_ckpt(first_stage_config)
-        else:
-            self.init_full_stages_from_ckpt(refinement_stage_config)
 
         if permuter_config is None:
-            permuter_config = {"target": "taming.modules.transformer.permuter.Identity"}
+            permuter_config = {"target": "taming.modules.transformer.permuter.Identity"}            
         self.permuter = instantiate_from_config(config=permuter_config)
+
         self.transformer = instantiate_from_config(config=transformer_config)
         self.use_condGPT = self.transformer.__class__.__name__ == 'CondGPT'
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
+
+        self.init_cond_stage_from_ckpt(cond_stage_config)
+
+        if first_stage_config is not None:
+            self.init_first_stage_from_ckpt(first_stage_config)
+
+        if refinement_stage_config is not None:
+            self.init_full_stages_from_ckpt(refinement_stage_config)
+
         self.downsample_cond_size = downsample_cond_size
         self.pkeep = pkeep
 
@@ -93,6 +101,11 @@ class MaskGIT(pl.LightningModule):
         self.second_stage_model = model
         self.first_stage_model = model.first_stage_model
 
+    def set_first_stage_model(self, model):
+        self.first_stage_model = model
+
+    def set_second_stage_model(self, model):
+        self.second_stage_model = model
 
     def init_cond_stage_from_ckpt(self, config):
         if config == "__is_first_stage__":
@@ -155,7 +168,8 @@ class MaskGIT(pl.LightningModule):
         r = int(z_indices.shape[-1]**0.5)
         if len(mask.shape) == 4:
             H = mask.shape[-1]
-            mask = torch.nn.functional.interpolate(mask.float(), scale_factor=r/H)
+            if r != H:
+                mask = torch.nn.functional.interpolate(mask.float(), scale_factor=r/H)
             mask = mask.reshape(B, -1)
         elif len(mask.shape) == 3:
             assert mask.shape[1] == 1 and mask.shape[-1] == z_indices.shape[-1]
@@ -307,11 +321,21 @@ class MaskGIT(pl.LightningModule):
         return x - 1
 
     @torch.no_grad()
-    def encode_to_z(self, x):
-        quant_z, _, info = self.first_stage_model.encode(x)
+    def encode_to_z(self, x, mask=None):
+        if mask is not None:
+            quant_z, _, info, mask_out, quant_ref, indices_ref = self.first_stage_model.encode(x, mask, return_ref=True)
+        else:
+            quant_z, _, info = self.first_stage_model.encode(x)
+
         indices = info[2].view(quant_z.shape[0], -1)
         indices = self.permuter(indices)
-        return quant_z, indices
+        indices_ref = indices_ref.view(quant_z.shape[0], -1)
+        indices_ref = self.permuter(indices_ref)
+
+        if mask is None:
+            return quant_z, indices
+        else:
+            return quant_z, indices, mask_out, quant_ref, indices_ref
 
     @torch.no_grad()
     def encode_to_c(self, c):
@@ -347,7 +371,7 @@ class MaskGIT(pl.LightningModule):
         return quant_z
 
     @torch.no_grad()
-    def forward_with_recon(self, batch, mask=None, det=False, return_quant=False):
+    def forward_to_recon(self, batch, mask=None, det=False, return_quant=False):
         '''
         similar to log image, but return a single image tensor given the default mask function instead of logging results
 
@@ -373,73 +397,74 @@ class MaskGIT(pl.LightningModule):
         return self.decode_to_img(index_sample, quant_z.shape, return_quant=return_quant)
 
     @torch.no_grad()
-    def log_images(self, batch, temperature=None, top_k=None, callback=None, lr_interface=False, composition=True, **kwargs):
-        log = dict()
-
-        N = 4
-        if lr_interface:
-            x, c = self.get_xc(batch, N, diffuse=False, upsample_factor=8)
-        else:
-            x, c = self.get_xc(batch, N)
-
+    def forward_to_indices(self, batch, z_indices, mask, det=False):
+        x, c = self.get_xc(batch)
         x = x.to(device=self.device).float()
         c = c.to(device=self.device).float()
-
-        quant_z, z_indices = self.encode_to_z(x)
+        
+        # quant_z, z_indices = self.encode_to_z(x)
         quant_c, c_indices = self.encode_to_c(c)
-
         B, C, H, W = x.shape
         gH, gW = quant_z.shape[2:]
 
+        mask = self.preprocess_mask(mask, z_indices)
+        r_indices = torch.full_like(z_indices, self.mask_token)
+        z_start_indices = mask*z_indices+(1-mask)*r_indices      
+        index_sample = self.sample(z_start_indices, 
+                                   c_indices,
+                                   sample= not det)
+        return index_sample
 
-        # HALF SAMPLE 
-        # mask = torch.ones(z_indices.shape, device=z_indices.device)
-        # mask[:, z_indices.shape[1]//2:] = 0
-        # mask = mask.to(dtype=torch.int64)
-        # image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
-        # r_indices = torch.full_like(z_indices, self.mask_token)
-        # z_start_indices = mask*z_indices+(1-mask)*r_indices      
-        # index_sample = self.sample(z_start_indices, c_indices,
-        #                            temperature=temperature if temperature is not None else 1.0,
-        #                            sample=True,
-        #                            top_k=top_k if top_k is not None else 100,
-        #                            callback=callback if callback is not None else lambda k: None)
-        # x_sample_half = self.decode_to_img(index_sample, quant_z.shape)
-        # # composition
-        # if composition:
-        #     x_sample_half = image_mask * x + (1 - image_mask) * x_sample_half
-        #     if self.second_stage_model is not None:
-        #         # x_sample_half = self.second_stage_model.refine(x_sample_half, image_mask)
-        #         x_sample_half, _, _ = self.second_stage_model(x, mask=image_mask)
 
-        pkeep = self.mask_ratio_scheduler(B, fix_ratio=0.5)
+    @torch.no_grad()
+    def log_images(self, batch, temperature=None, top_k=None, callback=None, lr_interface=False, composition=True, **kwargs):
+        
+        log = dict()
 
-        # scatter inpainting sample
-        # mask = self.scatter_mask(z_indices, p=pkeep)
-        # image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
-        # r_indices = torch.full_like(z_indices, self.mask_token)
-        # z_start_indices = mask*z_indices+(1-mask)*r_indices      
-        # index_sample = self.sample(z_start_indices, c_indices,
-        #                            temperature=temperature if temperature is not None else 1.0,
-        #                            sample=True,
-        #                            top_k=top_k if top_k is not None else 100,
-        #                            callback=callback if callback is not None else lambda k: None)
-        # x_sample_scatter = self.decode_to_img(index_sample, quant_z.shape)
+        x, c = self.get_xc(batch)
+        x = x.to(device=self.device).float()
+        c = c.to(device=self.device).float()
 
-        # # composition
-        # if composition:
-        #     x_sample_scatter_comp = image_mask * x + (1 - image_mask) * x_sample_scatter
-        #     if self.second_stage_model is not None:
-        #         x_sample_scatter_comp = self.second_stage_model.refine(x_sample_scatter_comp, image_mask)
+        B, C, H, W = x.shape
+        pkeep = self.mask_ratio_scheduler(B, fix_ratio=0.5)       
 
-        # det box inpainting sample
-        mask = self.box_mask(z_indices, p=pkeep, det=True)
-        image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
+        if not self.mask_on_latent:
+            mask_in = box_mask(x.shape, x.device, pkeep, det=True)
+            ##############################
+            # quant_z_gt, _, info = self.first_stage_model.first_stage_model.encode(x)
+            # z_indices_gt = info[2]
+            ##############################
+            x = x * mask_in
+            # quant_z, z_indices, mask_out = self.encode_to_z(x, mask_in)
+            quant_z, z_indices, mask_out, quant_ref, z_indices_ref = self.encode_to_z(x, mask_in)
+        else:
+            quant_z, z_indices = self.encode_to_z(x)
+
+        quant_c, c_indices = self.encode_to_c(c)
+        gH, gW = quant_z.shape[2:]
+
+
+        # det inpainting sample
+        if self.mask_on_latent:
+            mask = self.box_mask(z_indices, p=pkeep, det=True)
+            image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
+            z_indices_recon = z_indices
+        else:
+            image_mask = mask_in
+            mask = mask_out.reshape(mask_out.shape[0], -1).int()
+            z_indices_recon = z_indices_ref
+
+        # import ipdb; ipdb.set_trace()
+
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
         index_sample = self.sample(z_start_indices, c_indices,
                                    sample=False,
                                    callback=callback if callback is not None else lambda k: None)
+
+        ####################
+        # index_sample = z_indices * mask + (1-mask) * z_indices_gt
+        #####################
 
         x_sample_det = self.decode_to_img(index_sample, quant_z.shape)
 
@@ -452,10 +477,18 @@ class MaskGIT(pl.LightningModule):
         x_masked = image_mask * x
 
         # reconstruction
-        x_rec = self.decode_to_img(z_indices, quant_z.shape)
+        if self.mask_on_latent:
+            x_rec = self.decode_to_img(z_indices_recon, quant_z.shape)
+        else:
+            r_indices = torch.full_like(z_indices_recon, self.mask_token)
+            z_start_indices = mask*z_indices_recon+(1-mask)*r_indices      
+            index_sample = self.sample(z_start_indices, c_indices,
+                                       sample=False,
+                                       callback=callback if callback is not None else lambda k: None)
+            x_rec = self.decode_to_img(index_sample, quant_z.shape)
 
         log["inputs"] = x
-        # log["reconstructions"] = x_rec
+        log["reconstructions"] = x_rec
 
         if self.be_unconditional:
             pass
@@ -489,7 +522,7 @@ class MaskGIT(pl.LightningModule):
         # log["samples_half"] = x_sample_half
         # log["sample_scatter"] = x_sample_scatter_comp
         # log["sample_scatter_gen"] = x_sample_scatter
-        # log["samples_det_gen"] = x_sample_det
+        log["samples_det_gen"] = x_sample_det
         log["samples_det"] = x_sample_det_comp
         log["inputs_masked"] = x_masked
 

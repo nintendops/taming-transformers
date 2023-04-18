@@ -120,11 +120,12 @@ if __name__ == '__main__':
     print("Done!")
    
     # loading checkpoint
-    sd = torch.load(ckpt_path, map_location=device)["state_dict"]
-    print("Loading checkpoint from %s..."%ckpt_path)
-    model.load_state_dict(sd, strict=False)
-    print("Done!")
-    
+    if len(ckpt_path) > 0:
+        sd = torch.load(ckpt_path, map_location=device)["state_dict"]
+        print("Loading checkpoint from %s..."%ckpt_path)
+        model.load_state_dict(sd, strict=False)
+        print("Done!")
+        
     # loading dataset
     print("instantiating Dataset...")
     # config.data.params.train.params.split = "validation"

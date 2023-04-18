@@ -154,6 +154,67 @@ class ResnetBlock(nn.Module):
         return x+h
 
 
+
+class PartialResnetBlock(nn.Module):
+    def __init__(self, *, 
+                 in_channels, 
+                 out_channels=None, 
+                 conv_shortcut=False, 
+                 conv_choice=MAT.Conv2dLayerPartialRestrictive,
+                 dropout):
+
+        super().__init__()
+        self.in_channels = in_channels
+        out_channels = in_channels if out_channels is None else out_channels
+        self.out_channels = out_channels
+        self.use_conv_shortcut = conv_shortcut
+        # conv_choice =  MAT.Conv2dLayerPartialRestrictive
+
+        self.norm1 = Normalize(in_channels)
+        self.conv1 = conv_choice(in_channels,
+                                 out_channels,
+                                 kernel_size=3,
+                                 stride=1)
+
+        self.norm2 = Normalize(out_channels)
+        self.dropout = torch.nn.Dropout(dropout)
+        self.conv2 = conv_choice(out_channels,
+                                 out_channels,
+                                 kernel_size=3,
+                                 stride=1)
+
+        if self.in_channels != self.out_channels:
+            if self.use_conv_shortcut:
+                self.conv_shortcut = conv_choice(in_channels,
+                                                 out_channels,
+                                                 kernel_size=3,
+                                                 stride=1)
+            else:
+                self.nin_shortcut = conv_choice(in_channels,
+                                                out_channels,
+                                                kernel_size=1,
+                                                stride=1)
+
+    def forward(self, x, mask):
+        h = x
+        m = mask
+        h = self.norm1(h)
+        h = nonlinearity(h)
+        h, m = self.conv1(h, m)
+        h = self.norm2(h)
+        h = nonlinearity(h)
+        h = self.dropout(h)
+        h, m = self.conv2(h, m)
+
+        if self.in_channels != self.out_channels:
+            if self.use_conv_shortcut:
+                x, m = self.conv_shortcut(x, m)
+            else:
+                x, m = self.nin_shortcut(x, m)
+
+        return x+h, m
+
+
 class AttnBlock(nn.Module):
     def __init__(self, in_channels):
         super().__init__()
@@ -182,7 +243,7 @@ class AttnBlock(nn.Module):
                                         padding=0)
 
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         h_ = x
         h_ = self.norm(h_)
         q = self.q(h_)
@@ -206,7 +267,10 @@ class AttnBlock(nn.Module):
 
         h_ = self.proj_out(h_)
 
-        return x+h_
+        if mask is not None:
+            return x + h_, mask
+        else:
+            return x+h_
 
 
 class Model(nn.Module):
@@ -450,8 +514,6 @@ class Encoder(nn.Module):
         h = self.conv_out(h)
         return h
 
-
-
 class MaskEncoder(nn.Module):
     def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks,
                  attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
@@ -550,6 +612,101 @@ class MaskEncoder(nn.Module):
         H1, W1 = masks_in.shape[-2:]
         H2, W2 = h.shape[-2:]
         mask_out = torch.nn.functional.interpolate(masks_in, scale_factor=H2/H1)
+        return h, mask_out
+
+class PartialEncoder(nn.Module):
+    def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks, conv_choice=MAT.Conv2dLayerPartialRestrictive,
+                 attn_resolutions, clamp_ratio=0.5, dropout=0.0, resamp_with_conv=True, in_channels,
+                 resolution, z_channels, double_z=True, **ignore_kwargs):
+        super().__init__()
+        self.ch = ch
+        self.num_resolutions = len(ch_mult)
+        self.num_res_blocks = num_res_blocks
+        self.resolution = resolution
+        self.in_channels = in_channels + 1
+        PartialConv = conv_choice # MAT.Conv2dLayerPartialRestrictive
+
+        # downsampling
+        self.conv_in = PartialConv(self.in_channels,
+                                   self.ch,
+                                   kernel_size=3,
+                                   stride=1)
+
+
+        curr_res = resolution
+        in_ch_mult = (1,)+tuple(ch_mult)
+        self.down = nn.ModuleList()
+        for i_level in range(self.num_resolutions):
+            block = nn.ModuleList()
+            attn = nn.ModuleList()
+            block_in = ch*in_ch_mult[i_level]
+            block_out = ch*ch_mult[i_level]
+            for i_block in range(self.num_res_blocks):
+                block.append(PartialResnetBlock(in_channels=block_in,
+                                                out_channels=block_out,
+                                                conv_choice=conv_choice,
+                                                dropout=dropout
+                                                ))
+                block_in = block_out
+                if curr_res in attn_resolutions:
+                    attn.append(AttnBlock(block_in))
+            down = nn.Module()
+            down.block = block
+            down.attn = attn
+            if i_level != self.num_resolutions-1:
+                down.downsample = PartialConv(block_in, block_in, kernel_size=3, stride=2)
+                curr_res = curr_res // 2
+            self.down.append(down)
+
+        # middle
+        self.mid = nn.Module()
+        self.mid.block_1 = PartialResnetBlock(in_channels=block_in,
+                                       out_channels=block_in,
+                                       conv_choice=conv_choice,
+                                       dropout=dropout)
+        self.mid.attn_1 = AttnBlock(block_in)
+        self.mid.block_2 = PartialResnetBlock(in_channels=block_in,
+                                       out_channels=block_in,
+                                       conv_choice=conv_choice,
+                                       dropout=dropout)
+
+        # end
+        self.norm_out = Normalize(block_in)
+        self.conv_out = PartialConv(block_in,
+                                    2*z_channels if double_z else z_channels,
+                                    kernel_size=3,
+                                    stride=1)
+
+
+    def forward(self, x, masks_in):
+        m = masks_in.float()
+        x = torch.cat([m - 0.5, x * m], dim=1)
+
+        # downsampling
+        h, m = self.conv_in(x, m)
+        hs = [h]
+
+        for i_level in range(self.num_resolutions):
+            for i_block in range(self.num_res_blocks):
+                h, m = self.down[i_level].block[i_block](hs[-1], m)
+                if len(self.down[i_level].attn) > 0:
+                    h = self.down[i_level].attn[i_block](h)
+                hs.append(h)
+            if i_level != self.num_resolutions-1:
+                h, m = self.down[i_level].downsample(hs[-1], m)
+                hs.append(h)
+
+        # middle
+        h = hs[-1]
+        h, m = self.mid.block_1(h, m)
+        h = self.mid.attn_1(h)
+        h, m = self.mid.block_2(h, m)
+
+        # end
+        h = self.norm_out(h)
+        h = nonlinearity(h)
+        h, m = self.conv_out(h, m)
+        mask_out = m
         return h, mask_out
 
 

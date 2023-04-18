@@ -1,4 +1,5 @@
 import argparse, os, sys, datetime, glob, importlib
+import warnings
 from omegaconf import OmegaConf
 import numpy as np
 from PIL import Image
@@ -384,7 +385,7 @@ if __name__ == "__main__":
     #           params:
     #               key: value
 
-
+    warnings.filterwarnings("ignore")
 
     now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
 

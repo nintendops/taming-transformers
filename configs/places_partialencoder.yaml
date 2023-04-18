@@ -1,23 +1,11 @@
 model:
   base_learning_rate: 4.5e-06
-  target: taming.models.maskgit.MaskGIT
+  target: taming.models.refinement_ae.MaskPartialEncoderModel
   params:
-    ckpt_path: /data/Haiwei/taming_ckpts/places256_maskgit_abssep_CONT/checkpoints/last.ckpt
-    cond_stage_key: segmentation
-    sampling_ratio: 0.2
-    attention_extent: mask
-    mask_on_latent: true
-    transformer_config:
-      target: taming.modules.transformer.mingpt.GPT
-      params:
-        vocab_size: 8193
-        block_size: 512  # 257
-        n_layer: 24 # 24,40
-        n_head: 16
-        n_embd: 1408
-        embd_pdrop: 0.1
-        resid_pdrop: 0.1
-        attn_pdrop: 0.1
+    ckpt_path: logs/2023-04-12T14-25-22_places256_maskencoder_cr48/checkpoints/last.ckpt
+    embed_dim: 256
+    n_embed: 8192
+    image_key: "image"
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
@@ -44,12 +32,28 @@ model:
           dropout: 0.0
         lossconfig:
           target: taming.modules.losses.DummyLoss
-    cond_stage_config: "__is_unconditional__"
-
+    ddconfig:
+      padding_free: false
+      double_z: false
+      z_channels: 256
+      resolution: 256
+      in_channels: 3
+      out_ch: 3
+      ch: 128
+      ch_mult:
+      - 1
+      - 1
+      - 2
+      - 2
+      - 4
+      num_res_blocks: 2
+      attn_resolutions:
+      - 16
+      dropout: 0.0
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 4
+    batch_size: 20
     train:
       target: taming.data.places365.Places
       params:

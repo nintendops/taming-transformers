@@ -65,11 +65,19 @@ class VQModel(pl.LightningModule):
         self.load_state_dict(sd, strict=False)
         print(f"Restored from {path}")
 
-    def encode(self, x):
+    def encode(self, x, mask=None):
         h = self.encoder(x)
         h = self.quant_conv(h)
         quant, emb_loss, info = self.quantize(h)
-        return quant, emb_loss, info
+
+        if mask is not None:
+          # a naive approach to produce downsampled mask
+          H1 = x.shape[-1]
+          H2 = quant.shape[-1]
+          mask = torch.nn.interpolate(mask.float(), scale_factor=H2/H1)
+          return quant, emb_loss, info, mask
+        else:
+          return quant, emb_loss, info
 
     def decode(self, quant):
         quant = self.post_quant_conv(quant)
@@ -449,3 +457,4 @@ class EMAVQ(VQModel):
         opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(),
                                     lr=lr, betas=(0.5, 0.9))
         return [opt_ae, opt_disc], []                                           
+

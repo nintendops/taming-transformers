@@ -68,18 +68,18 @@ class Conv2dLayerPartial(nn.Module):
                  bias            = True,         # Apply additive bias before the activation function?
                  activation      = 'relu',     # Activation function: 'relu', 'lrelu', etc.
                  up              = 1,            # Integer upsampling factor.
-                 down            = 1,            # Integer downsampling factor.
+                 stride          = 1,            # Integer downsampling factor.
                  resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
                  conv_clamp      = None,         # Clamp the output to +-X, None = disable clamping.
                  trainable       = True,         # Update the weights of this layer during training?
                  ):
         super().__init__()
-        self.conv = Conv2dLayer(in_channels, out_channels, kernel_size, bias, activation, up, down, resample_filter,
+        self.conv = Conv2dLayer(in_channels, out_channels, kernel_size, bias, activation, up, stride, resample_filter,
                                 conv_clamp, trainable)
 
         self.weight_maskUpdater = torch.ones(1, 1, kernel_size, kernel_size)
         self.slide_winsize = kernel_size ** 2
-        self.stride = down
+        self.stride = stride
         self.padding = kernel_size // 2 if kernel_size % 2 == 1 else 0
 
     def forward(self, x, mask=None):
@@ -110,24 +110,27 @@ class Conv2dLayerPartialRestrictive(nn.Module):
                  in_channels,                    # Number of input channels.
                  out_channels,                   # Number of output channels.
                  kernel_size,                    # Width and height of the convolution kernel.
-                 clamp_ratio     = 0.5,
+                 clamp_ratio     = 0.48,
                  bias            = True,         # Apply additive bias before the activation function?
                  activation      = 'relu',     # Activation function: 'relu', 'lrelu', etc.
                  up              = 1,            # Integer upsampling factor.
-                 down            = 1,            # Integer downsampling factor.
+                 stride          = 1,            # Integer downsampling factor.
                  resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
                  conv_clamp      = None,         # Clamp the output to +-X, None = disable clamping.
                  trainable       = True,         # Update the weights of this layer during training?
                  ):
         super().__init__()
-        self.conv = Conv2dLayer(in_channels, out_channels, kernel_size, bias, activation, up, down, resample_filter,
+        self.conv = Conv2dLayer(in_channels, out_channels, kernel_size, bias, activation, up, stride, resample_filter,
                                 conv_clamp, trainable)
 
         self.weight_maskUpdater = torch.ones(1, 1, kernel_size, kernel_size)
         self.slide_winsize = kernel_size ** 2
-        self.stride = down
+        self.stride = stride
         self.clamp_ratio = clamp_ratio
         self.padding = kernel_size // 2 if kernel_size % 2 == 1 else 0
+
+        # TODO: for now only supporting kernel size 3, 1 in our implementations
+        # assert kernel_size == 3 or kernel_size == 1
 
     def forward(self, x, mask=None):
         if mask is not None:
@@ -135,15 +138,18 @@ class Conv2dLayerPartialRestrictive(nn.Module):
                 if self.weight_maskUpdater.type() != x.type():
                     self.weight_maskUpdater = self.weight_maskUpdater.to(x)
                 ################
-                mask_padded = F.pad(mask, (1,1,1,1), mode='constant', value=1)
-                update_mask_padded = F.conv2d(mask_padded, self.weight_maskUpdater, bias=None, stride=self.stride, padding=0)
-                mask_ratio_padded = update_mask_padded / self.slide_winsize
-                update_mask_restrictive = (mask_ratio_padded > self.clamp_ratio).float()
-                ################
+                mask_ones = torch.full_like(mask, 1.0, dtype=torch.float32).to(mask.device)
+                um1 = F.conv2d(mask_ones, self.weight_maskUpdater, bias=None, stride=self.stride, padding=self.padding)
                 update_mask = F.conv2d(mask, self.weight_maskUpdater, bias=None, stride=self.stride, padding=self.padding)
+                # offset = self.padding
+                # mask_padded = F.pad(mask, (offset,offset,offset,offset), mode='constant', value=0.5)
+                # update_mask_padded = F.conv2d(mask_padded, self.weight_maskUpdater, bias=None, stride=self.stride, padding=0)
+                mask_ratio_true = update_mask / um1
+                update_mask_restrictive = (mask_ratio_true > self.clamp_ratio).float()
+                ################
                 mask_ratio = self.slide_winsize / (update_mask + 1e-8)
                 # update_mask = torch.clamp(update_mask, 0, 1)  # 0 or 1
-                # this step shrinks the mask slightly
+                # this step shrinks the mask slightly based on the clamp ratio
                 mask_ratio = torch.mul(mask_ratio, update_mask_restrictive)
 
             x = self.conv(x)
