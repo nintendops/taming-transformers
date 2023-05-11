@@ -52,6 +52,8 @@ class MaskGIT(pl.LightningModule):
         ##########################################
         self.first_stage_key = first_stage_key
         self.cond_stage_key = cond_stage_key
+        self.first_stage_model = None
+        self.second_stage_model = None
 
         if permuter_config is None:
             permuter_config = {"target": "taming.modules.transformer.permuter.Identity"}            
@@ -59,6 +61,7 @@ class MaskGIT(pl.LightningModule):
 
         self.transformer = instantiate_from_config(config=transformer_config)
         self.use_condGPT = self.transformer.__class__.__name__ == 'CondGPT'
+
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
 
@@ -323,19 +326,17 @@ class MaskGIT(pl.LightningModule):
     @torch.no_grad()
     def encode_to_z(self, x, mask=None):
         if mask is not None:
-            quant_z, _, info, mask_out, quant_ref, indices_ref = self.first_stage_model.encode(x, mask, return_ref=True)
+            quant_z, _, info, mask_out = self.first_stage_model.encode(x, mask)
         else:
             quant_z, _, info = self.first_stage_model.encode(x)
 
         indices = info[2].view(quant_z.shape[0], -1)
         indices = self.permuter(indices)
-        indices_ref = indices_ref.view(quant_z.shape[0], -1)
-        indices_ref = self.permuter(indices_ref)
 
         if mask is None:
             return quant_z, indices
         else:
-            return quant_z, indices, mask_out, quant_ref, indices_ref
+            return quant_z, indices, mask_out
 
     @torch.no_grad()
     def encode_to_c(self, c):
@@ -371,7 +372,7 @@ class MaskGIT(pl.LightningModule):
         return quant_z
 
     @torch.no_grad()
-    def forward_to_recon(self, batch, mask=None, det=False, return_quant=False):
+    def forward_to_recon(self, batch, mask=None, det=True, return_quant=False):
         '''
         similar to log image, but return a single image tensor given the default mask function instead of logging results
 
@@ -397,21 +398,20 @@ class MaskGIT(pl.LightningModule):
         return self.decode_to_img(index_sample, quant_z.shape, return_quant=return_quant)
 
     @torch.no_grad()
-    def forward_to_indices(self, batch, z_indices, mask, det=False):
+    def forward_to_indices(self, batch, z_indices, mask, det=True):
         x, c = self.get_xc(batch)
         x = x.to(device=self.device).float()
         c = c.to(device=self.device).float()
-        
+       
         # quant_z, z_indices = self.encode_to_z(x)
+        # B, C, H, W = x.shape
         quant_c, c_indices = self.encode_to_c(c)
-        B, C, H, W = x.shape
-        gH, gW = quant_z.shape[2:]
-
+        
         mask = self.preprocess_mask(mask, z_indices)
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
-        index_sample = self.sample(z_start_indices, 
-                                   c_indices,
+        index_sample = self.sample(z_start_indices.to(device=self.device), 
+                                   c_indices.to(device=self.device),
                                    sample= not det)
         return index_sample
 
@@ -428,15 +428,16 @@ class MaskGIT(pl.LightningModule):
         B, C, H, W = x.shape
         pkeep = self.mask_ratio_scheduler(B, fix_ratio=0.5)       
 
+
         if not self.mask_on_latent:
             mask_in = box_mask(x.shape, x.device, pkeep, det=True)
             ##############################
             # quant_z_gt, _, info = self.first_stage_model.first_stage_model.encode(x)
             # z_indices_gt = info[2]
             ##############################
-            x = x * mask_in
             # quant_z, z_indices, mask_out = self.encode_to_z(x, mask_in)
-            quant_z, z_indices, mask_out, quant_ref, z_indices_ref = self.encode_to_z(x, mask_in)
+
+            quant_z, z_indices, mask_out = self.encode_to_z(x * mask_in, mask_in)
         else:
             quant_z, z_indices = self.encode_to_z(x)
 
@@ -452,10 +453,8 @@ class MaskGIT(pl.LightningModule):
         else:
             image_mask = mask_in
             mask = mask_out.reshape(mask_out.shape[0], -1).int()
-            z_indices_recon = z_indices_ref
-
-        # import ipdb; ipdb.set_trace()
-
+            _, z_indices_recon = self.encode_to_z(x)
+            
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
         index_sample = self.sample(z_start_indices, c_indices,
@@ -569,7 +568,7 @@ class MaskGIT(pl.LightningModule):
         self.log("val/loss", loss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
         return loss
 
-    def configure_optimizers(self):
+    def configure_optimizers_with_lr(self, lr):
         """
         Following minGPT:
         This long function is unfortunately doing something very simple and is being very defensive:
@@ -585,7 +584,6 @@ class MaskGIT(pl.LightningModule):
         for mn, m in self.transformer.named_modules():
             for pn, p in m.named_parameters():
                 fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
-
                 if pn.endswith('bias'):
                     # all biases will not be decayed
                     no_decay.add(fpn)
@@ -612,5 +610,8 @@ class MaskGIT(pl.LightningModule):
             {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": 0.01},
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
-        optimizer = torch.optim.AdamW(optim_groups, lr=self.learning_rate, betas=(0.9, 0.95))
+        optimizer = torch.optim.AdamW(optim_groups, lr=lr, betas=(0.9, 0.95))
         return optimizer
+
+    def configure_optimizers(self):
+        return self.configure_optimizers_with_lr(self.learning_rate)

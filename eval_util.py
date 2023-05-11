@@ -323,6 +323,7 @@ def eval_transformer_log(*, data, idx, model, opt, config, save_path, log_input=
     # ---------------------- first log the input data -----------------------------
     image = batch['image']
     unconditional = config.model.params.cond_stage_config == "__is_unconditional__"
+    
     if unconditional:
         segmentation = image
     else:
@@ -333,11 +334,11 @@ def eval_transformer_log(*, data, idx, model, opt, config, save_path, log_input=
         write_images(os.path.join(save_path, f'image_{image_idx}_src.png'), image)
     # -----------------------------------------------------------------------------
 
-    codebook_size = config.model.params.first_stage_config.params.embed_dim
-    nb = 1
-    res = 256
-    c_code_res = 16
-    H, W, C = image.shape
+    # codebook_size = config.model.params.first_stage_config.params.embed_dim
+    # nb = 1
+    # res = 256
+    # c_code_res = 16
+    # H, W, C = image.shape
 
     true_batch = dict()
     true_batch['image'] = tensify(image, torch.device('cuda'), permute=False)

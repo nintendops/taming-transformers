@@ -66,6 +66,10 @@ class VQModel(pl.LightningModule):
         print(f"Restored from {path}")
 
     def encode(self, x, mask=None):
+
+        if mask is not None:
+          x = x * mask
+
         h = self.encoder(x)
         h = self.quant_conv(h)
         quant, emb_loss, info = self.quantize(h)
@@ -74,7 +78,7 @@ class VQModel(pl.LightningModule):
           # a naive approach to produce downsampled mask
           H1 = x.shape[-1]
           H2 = quant.shape[-1]
-          mask = torch.nn.interpolate(mask.float(), scale_factor=H2/H1)
+          mask = torch.nn.functional.interpolate(mask.float(), scale_factor=H2/H1)
           return quant, emb_loss, info, mask
         else:
           return quant, emb_loss, info
@@ -184,6 +188,18 @@ class VQModel(pl.LightningModule):
         opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(),
                                     lr=lr, betas=(0.5, 0.9))
         return [opt_ae, opt_disc], []
+
+    def configure_optimizers_with_lr(self, lr):
+        opt_ae = torch.optim.Adam(list(self.encoder.parameters())+
+                                  list(self.decoder.parameters())+
+                                  list(self.quantize.parameters())+
+                                  list(self.quant_conv.parameters())+
+                                  list(self.post_quant_conv.parameters()),
+                                  lr=lr, betas=(0.5, 0.9))
+        opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(),
+                                    lr=lr, betas=(0.5, 0.9))
+        return [opt_ae, opt_disc], []
+
 
     def get_last_layer(self):
         return self.decoder.conv_out.weight

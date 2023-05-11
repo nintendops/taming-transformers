@@ -176,8 +176,10 @@ class GPT(nn.Module):
         position_embeddings = self.pos_emb[:, :t, :] # each position maps to a (learnable) vector
 
         x = self.drop(token_embeddings + position_embeddings)
-        for block in self.blocks:
+        for idx, block in enumerate(self.blocks):
+            # if idx <= len(self.blocks) // 2:
             x = block(x, autoregressive=autoregressive, mask=mask)
+
         x = self.ln_f(x)
         logits = self.head(x)
 

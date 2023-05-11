@@ -155,7 +155,7 @@ class DataModuleFromConfig(pl.LightningDataModule):
         super().__init__()
         self.batch_size = batch_size
         self.dataset_configs = dict()
-        self.num_workers = num_workers if num_workers is not None else batch_size*2
+        self.num_workers = num_workers if num_workers is not None else batch_size
         if train is not None:
             self.dataset_configs["train"] = train
             self.train_dataloader = self._train_dataloader

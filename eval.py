@@ -1,6 +1,7 @@
 # eval testing
 
 # load config for transformer
+import warnings
 import argparse, os, sys, datetime, glob, importlib
 from omegaconf import OmegaConf
 import functools
@@ -90,7 +91,9 @@ def get_parser(**parser_kwargs):
     return parser
 
 
+
 if __name__ == '__main__':
+    warnings.filterwarnings("ignore")
     parser = get_parser()
     opt, unknown = parser.parse_known_args()
     device = torch.device('cuda')
