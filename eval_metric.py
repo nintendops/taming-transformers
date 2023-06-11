@@ -116,16 +116,13 @@ if __name__ == '__main__':
     data.setup()
     print("Done!")
 
-    # if 'test' in data.datasets.keys():
-    #     dataset = data.datasets['test']
-    # else:
-    #     dataset = data.datasets['train']
-
-    dataset = data.datasets['train']
+    dataset = data.datasets['test']
 
     # callback function for the generative model
     def generate_results(G, batch):
-        return G(batch)[0]
+        mask = batch['mask']
+        rec =  G(batch, mask=mask, recomposition=True)[0]
+        return rec
 
     kwargs = dict(G=model, dataset=dataset, G_callback=generate_results, device=device, num_gpus=opt.num_gpus)
 

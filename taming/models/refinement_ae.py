@@ -104,10 +104,16 @@ class MaskPartialEncoderModel(pl.LightningModule):
     def encode(self, x, mask=None, return_ref=False):       
         temperature = 1.0
         # quant_z_gt, _, info_gt = self.first_stage_model.encode(x)        
-        x = x * mask if mask is not None else x
+
+        if mask is None:
+            mask_in = torch.full([x.shape[0],1,x.shape[2],x.shape[3]], 1.0, dtype=torch.int32).to(x.device)
+        else:
+            mask_in = mask
+
+        x = x * mask_in 
         quant_z_ref, _, info = self.first_stage_model.encode(x)       
         indices_ref = info[2].reshape(-1)
-        logits, mask_out = self.encode_logits(x, mask)     
+        logits, mask_out = self.encode_logits(x, mask_in)     
         B, L, H, W = logits.shape
         logits = logits.permute(0,2,3,1).reshape(B, -1, L)
         probs = F.softmax(logits / temperature, dim=-1)
@@ -121,10 +127,13 @@ class MaskPartialEncoderModel(pl.LightningModule):
             indices, shape=bhwc)
 
         info = (None, None, indices)
+
         if return_ref:
             return quant_z, None, info, mask_out, quant_z_ref, indices_ref
-        else:
+        elif mask is not None:
             return quant_z, None, info, mask_out
+        else:
+            return quant_z, None, info
 
     @torch.no_grad()
     def encode_to_z_first_stage(self, x):
@@ -144,8 +153,12 @@ class MaskPartialEncoderModel(pl.LightningModule):
         return self.first_stage_model.decode(quant_z)
 
     def forward(self, x, mask=None):
+
         if mask is not None:
             x = mask * x
+        else:
+            mask = torch.full([x.shape[0],1,x.shape[2],x.shape[3]], 1.0, dtype=torch.int32).to(x.device)
+
         logits, mask_out = self.encode_logits(x, mask)
         return logits, mask_out
 
@@ -203,8 +216,8 @@ class MaskPartialEncoderModel(pl.LightningModule):
         x = self.get_input(batch, self.image_key)
         x = x.to(self.device)
         quant_z, gt_z_indices = self.encode_to_z_first_stage(x)
-        mask_in = box_mask(x.shape, x.device, 0.5, det=True)
-        # mask_in = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1])).to(x.device)
+        # mask_in = box_mask(x.shape, x.device, 0.5, det=True)
+        mask_in = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1])).to(x.device)
         logits, mask_out = self(x, mask_in)
 
         # upsampling
@@ -225,7 +238,6 @@ class MaskPartialEncoderModel(pl.LightningModule):
         ######################################
 
         mask_out = mask_out.reshape(B, -1).int()
-
 
         indices_combined = mask_out * indices_pred.reshape(B, -1) + (1 - mask_out) * gt_z_indices
         xrec = self.decode_to_img(indices_combined.int(), quant_z.shape)
@@ -271,7 +283,7 @@ class RefinementAE(pl.LightningModule):
                  n_embed,
                  embed_dim,
                  first_stage_config = None,
-                 first_stage_model_type='vae',
+                 first_stage_model_type='vae', # vae | transformer
                  mask_lower = 0.25,
                  mask_upper = 0.75,
                  ckpt_path=None,
@@ -393,13 +405,16 @@ class RefinementAE(pl.LightningModule):
             mask = mask_in
 
         ###### for comparison only ################
-        if self.first_stage_model_type != 'vae':
-            x_raw, quant_fstg = self.first_stage_model.forward_with_recon(batch, return_quant=True)
-
-        if return_fstg and self.first_stage_model_type == 'vae':
+        if self.first_stage_model_type == 'transformer':
+            x_raw, quant_fstg = self.first_stage_model.forward_to_recon(batch, 
+                                                                        mask=mask_out, 
+                                                                        det=False, 
+                                                                        return_quant=True)    
+        if self.first_stage_model_type == 'vae':
             x_raw, _ = self.first_stage_model(input)
-
-        x_comp = mask * input + (1 - mask) * x_raw
+        
+        if return_fstg:
+            x_comp = mask * input + (1 - mask) * x_raw
         ############################################
 
         if quant is None:
@@ -411,10 +426,6 @@ class RefinementAE(pl.LightningModule):
         # _, _, codes = info
         B, C, H, W = quant.shape
         
-        # enable this if first stage model is a maskGIT transformer
-        # x_fstg = self.first_stage_model.forward_with_recon(batch, mask=mask)
-            
-        # x_comp = mask * input + (1 - mask) * x_fstg
         # x_in = torch.cat([mask - 0.5, x_comp], dim=1)
 
         if mask_out is None:
@@ -426,7 +437,13 @@ class RefinementAE(pl.LightningModule):
         h = h + quant * ( 1 - mask_out)
 
         dec = self.decode(h)  
-        dec = mask * input + (1 - mask) * dec
+
+        # linear blending
+        k = 3
+        kernel = torch.ones(1,1,k,k) / k**2
+        pad = k // 2
+        smoothed_mask = F.conv2d(F.pad(mask,(pad,pad,pad,pad),value=1), kernel.to(mask.device), bias=None, padding=0)
+        dec = smoothed_mask * input + (1 - smoothed_mask) * dec
 
         # Additional U-Net to refine output
         if self.use_refinement:
@@ -460,7 +477,8 @@ class RefinementAE(pl.LightningModule):
     def get_mask(self, shape, device):
         # p = random.uniform(self.mask_lower, self.mask_upper)
         # return box_mask(shape, device, p)
-        return torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0.5,0.6])).to(device)
+        return torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0.1,0.4])).to(device)
+        # return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
 
     def get_mask_eval(self, shape, device):
         return box_mask(shape, device, 0.5, det=True)

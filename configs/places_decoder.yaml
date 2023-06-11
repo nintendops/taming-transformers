@@ -2,10 +2,11 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.refinement_ae.RefinementAE
   params:
-    # ckpt_path: logs/2023-05-06T18-16-20_randommask_decoder_reg/checkpoints/last.ckpt
+    ckpt_path: logs/2023-05-16T18-06-38_randommask_decoder_preceptual/checkpoints/last.ckpt
     embed_dim: 256
     n_embed: 1024
     image_key: image
+    restriction: false
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
@@ -53,13 +54,13 @@ model:
     lossconfig:
       target: taming.modules.losses.vqperceptual.PIPSWithDiscriminator
       params:
-        pixelloss_weight: 1.0
-        perceptual_weight: 1.0
-        r1_weight: 0.5
+        pixelloss_weight: 0.0
+        perceptual_weight: 0.1
+        r1_weight: 0.0
         disc_conditional: false
         disc_in_channels: 4
-        disc_start: 50000
-        disc_weight: 0.8
+        disc_start: 1
+        disc_weight: 1.0
 data:
   target: main.DataModuleFromConfig
   params:

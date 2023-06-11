@@ -939,9 +939,9 @@ class Generator(nn.Module):
 
 class Discriminator(torch.nn.Module):
     def __init__(self,
-                 c_dim,                        # Conditioning label (C) dimensionality.
-                 img_resolution,               # Input resolution.
-                 img_channels,                 # Number of input color channels.
+                 c_dim,                         # Conditioning label (C) dimensionality.
+                 img_resolution,                # Input resolution.
+                 img_channels,                  # Number of input color channels.
                  channel_base       = 32768,    # Overall multiplier for the number of channels.
                  channel_max        = 512,      # Maximum number of channels in any layer.
                  channel_decay      = 1,

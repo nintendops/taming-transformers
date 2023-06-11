@@ -33,7 +33,7 @@ class MaskGIT(pl.LightningModule):
                  mask_on_latent=False,
                  downsample_cond_size=-1,
                  pkeep=0.5,
-                 sampling_ratio=0.1,
+                 sampling_ratio=0.2,
                  sos_token=0,
                  unconditional=False,
                  attention_extent='mask',
@@ -226,7 +226,7 @@ class MaskGIT(pl.LightningModule):
         return out
 
     @torch.no_grad()
-    def sample(self, x, c, temperature=1.0, sample=False, top_k=None, 
+    def sample(self, x, c, temperature=0.5, sample=False, top_k=None, 
                callback=lambda k: None):
 
         scheduler = self.mask_scheduler
@@ -268,10 +268,8 @@ class MaskGIT(pl.LightningModule):
                 n_sample = int(k_unknown.item() * self.sampling_ratio)
 
             counter += 1
-
             mask_c_indices = torch.full_like(c, 0, dtype=torch.int64).to(x.device)
             mask_c = torch.cat([mask_c_indices, mask], dim=1)
-
             x_cond = x if x.size(1) <= block_size else x[:, -block_size:]  # crop context if needed
 
             # if self.use_condGPT:
@@ -428,15 +426,9 @@ class MaskGIT(pl.LightningModule):
         B, C, H, W = x.shape
         pkeep = self.mask_ratio_scheduler(B, fix_ratio=0.5)       
 
-
         if not self.mask_on_latent:
-            mask_in = box_mask(x.shape, x.device, pkeep, det=True)
-            ##############################
-            # quant_z_gt, _, info = self.first_stage_model.first_stage_model.encode(x)
-            # z_indices_gt = info[2]
-            ##############################
-            # quant_z, z_indices, mask_out = self.encode_to_z(x, mask_in)
-
+            # mask_in = 1 - box_mask(x.shape, x.device, pkeep, det=True)
+            mask_in = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1])).to(x.device)
             quant_z, z_indices, mask_out = self.encode_to_z(x * mask_in, mask_in)
         else:
             quant_z, z_indices = self.encode_to_z(x)
@@ -445,7 +437,7 @@ class MaskGIT(pl.LightningModule):
         gH, gW = quant_z.shape[2:]
 
 
-        # det inpainting sample
+        # inpainting sample
         if self.mask_on_latent:
             mask = self.box_mask(z_indices, p=pkeep, det=True)
             image_mask = torch.nn.functional.interpolate(mask.reshape(B,1,gH,gW).float(), scale_factor=H//gH)
@@ -458,7 +450,7 @@ class MaskGIT(pl.LightningModule):
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
         index_sample = self.sample(z_start_indices, c_indices,
-                                   sample=False,
+                                   sample=True,
                                    callback=callback if callback is not None else lambda k: None)
 
         ####################
@@ -486,8 +478,8 @@ class MaskGIT(pl.LightningModule):
                                        callback=callback if callback is not None else lambda k: None)
             x_rec = self.decode_to_img(index_sample, quant_z.shape)
 
-        log["inputs"] = x
-        log["reconstructions"] = x_rec
+        # log["inputs"] = x
+        # log["reconstructions"] = x_rec
 
         if self.be_unconditional:
             pass

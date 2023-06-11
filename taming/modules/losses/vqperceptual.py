@@ -110,8 +110,8 @@ class PIPSWithDiscriminator(nn.Module):
                 d_weight = torch.tensor(0.0)
 
             disc_factor = adopt_weight(self.disc_factor, global_step, threshold=self.discriminator_iter_start)
-            # loss = nll_loss + d_weight * disc_factor * g_loss 
-            loss = nll_loss + disc_factor * g_loss 
+            loss = nll_loss + d_weight * disc_factor * g_loss 
+            # loss = nll_loss + self.discriminator_weight * disc_factor * g_loss 
 
             log = {"{}/total_loss".format(split): loss.clone().detach().mean(),
                    "{}/nll_loss".format(split): nll_loss.detach().mean(),
@@ -139,7 +139,7 @@ class PIPSWithDiscriminator(nn.Module):
             # r1 regularization
             r1_grads = torch.autograd.grad(outputs=[logits_real.sum()], inputs=[inputs_tmp], create_graph=True, only_inputs=True)[0]
             r1_penalty = r1_grads.square().sum([1,2,3])
-            d_loss = disc_factor * self.disc_loss(logits_real, logits_fake) + self.r1_weight * r1_penalty.mean()
+            d_loss = disc_factor * (self.disc_loss(logits_real, logits_fake) + self.r1_weight * r1_penalty.mean())
 
             log = {"{}/disc_loss".format(split): d_loss.clone().detach().mean(),
                    "{}/logits_real".format(split): logits_real.detach().mean(),

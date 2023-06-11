@@ -6,6 +6,7 @@ import glob
 import json
 from tqdm import tqdm
 from torch.utils.data import Dataset
+from taming.modules.util import write_images, box_mask, RandomMask
 from taming.data.base import ImagePaths, NumpyPaths, ConcatDatasetWithIndex
 from PIL import Image
 
@@ -71,12 +72,13 @@ class Places(Dataset):
         return image
 
     def get(self, i):
-        if DEBUG_MODE:
-            i = 0 # np.random.randint(low=0,high=2) # 0
         img_path, name = self.data_list[i]
         image = self.preprocess_image(img_path)
         segmentation = image
         seg_path = img_path
+
+
+
         example = {"image": image,
                    "segmentation": segmentation,
                    "img_path": img_path,

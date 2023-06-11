@@ -129,7 +129,7 @@ class InpaintingMaster(pl.LightningModule):
             x = x.float()
         return x
 
-    def forward(self, batch, mask=None, use_vq_decoder=False, simple_return=True):
+    def forward(self, batch, mask=None, use_vq_decoder=False, simple_return=True, recomposition=False):
         '''
             forward with the complete model
         '''
@@ -186,6 +186,15 @@ class InpaintingMaster(pl.LightningModule):
                                         mask_out=mask_out.reshape(B, 1, H, W),
                                         return_fstg=False)
 
+
+        if recomposition:
+            # linear blending
+            k = 3
+            kernel = torch.ones(1,1,k,k) / k**2
+            pad = k // 2
+            smoothed_mask = F.conv2d(F.pad(mask,(pad,pad,pad,pad),value=1), kernel.to(mask.device), bias=None, padding=0)
+            dec = smoothed_mask * x + (1 - smoothed_mask) * dec
+
         if simple_return:
             return dec, mask
         else:
@@ -213,7 +222,7 @@ class InpaintingMaster(pl.LightningModule):
                 # discriminator
                 discloss, log_dict_disc = self.current_model.loss(x, xrec, optimizer_idx, self.global_step,
                                                 mask=mask, last_layer=self.current_model.get_last_layer(), split="train")
-                self.log("train/discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
+                self.log("train/discloss", disclosssmoothed_mask, prog_bar=True, logger=True, on_step=True, on_epoch=True)
                 self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=True)
                 return discloss
 
@@ -241,8 +250,8 @@ class InpaintingMaster(pl.LightningModule):
 
     def get_mask(self, shape, device):
         p = random.uniform(0.5, 0.5)
-        mask = box_mask(shape, device, p, det=True)
-        # mask = torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
+        # mask = box_mask(shape, device, p, det=True)
+        mask = torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0,0.6])).to(device)
         return mask
 
     @torch.no_grad()
@@ -251,24 +260,25 @@ class InpaintingMaster(pl.LightningModule):
             return self.current_model.log_images(batch, **kwargs)
         else:
             log = dict()
-
             VQModel, Encoder, Transformer = self.helper_model
             x = self.get_input(self.image_key, batch)
             x = x.to(self.device)
-
             # We are always making assumption that the latent block is 16x16 here
             mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
-           
             # mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/x.shape[-1]))
-            # xrec, mask, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)
-            
+            # xrec, mask, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)            
             rec, _, _, quant_z, _, mask_out = self(batch, mask=mask_in, simple_return=False)
             rec_fstg = VQModel.decode(quant_z)
 
-            # composition
-            rec = mask_in * x + (1 - mask_in) * rec
-            rec_fstg = mask_in * x + (1 - mask_in) * rec_fstg
+            # linear blending
+            k = 3
+            kernel = torch.ones(1,1,k,k) / k**2
+            pad = k // 2
+            smoothed_mask = F.conv2d(F.pad(mask_in,(pad,pad,pad,pad),value=1), kernel.to(mask_in.device), bias=None, padding=0)
 
+            # composition
+            rec = smoothed_mask * x + (1 - smoothed_mask) * rec
+            rec_fstg = smoothed_mask * x + (1 - smoothed_mask) * rec_fstg
             log["inputs"] = x
             log["reconstructions"] = rec
             log["masked_input"] = x * mask_in

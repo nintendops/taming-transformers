@@ -2,7 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.refinement_ae.MaskPartialEncoderModel
   params:
-    # ckpt_path: logs/2023-04-12T14-25-22_places256_maskencoder_cr48/checkpoints/last.ckpt
+    ckpt_path: logs/2023-05-06T18-14-51_places256_partialencoder_1024/checkpoints/last.ckpt
     embed_dim: 256
     n_embed: 1024
     image_key: "image"
