@@ -159,12 +159,16 @@ class DataModuleFromConfig(pl.LightningDataModule):
         if train is not None:
             self.dataset_configs["train"] = train
             self.train_dataloader = self._train_dataloader
-        if validation is not None:
-            self.dataset_configs["validation"] = validation
-            self.val_dataloader = self._val_dataloader
         if test is not None:
             self.dataset_configs["test"] = test
             self.test_dataloader = self._test_dataloader
+        if validation is not None:
+            self.dataset_configs["validation"] = validation
+            self.val_dataloader = self._val_dataloader
+        # elif test is not None:
+        #     self.dataset_configs["validation"] = test
+        #     self.val_dataloader = self._test_dataloader
+
         self.wrap = wrap
 
     def prepare_data(self):
@@ -532,7 +536,7 @@ if __name__ == "__main__":
             "image_logger": {
                 "target": "main.ImageLogger",
                 "params": {
-                    "batch_frequency": 500,
+                    "batch_frequency": 2000,
                     "max_images": 4,
                     "clamp": True,
                     "disable_image_logging": config.disable_image_logging is not None and config.disable_image_logging is True,
@@ -556,6 +560,7 @@ if __name__ == "__main__":
 
         # data
         data = instantiate_from_config(config.data)
+
         # NOTE according to https://pytorch-lightning.readthedocs.io/en/latest/datamodules.html
         # calling these ourselves should not be necessary but it is.
         # lightning still takes care of proper multiprocessing though

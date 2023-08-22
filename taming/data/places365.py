@@ -13,7 +13,7 @@ from PIL import Image
 DEBUG_MODE = False
 
 class Places(Dataset):
-    def __init__(self, dataroot="", crop_size=512, rescale=False, rescale_size=None, extension='jpg', split='train'):
+    def __init__(self, dataroot="", maskroot=None, crop_size=256, rescale=True, rescale_size=256, extension='jpg', split='train'):
         self.name = 'places365'
         self.ext = extension
         self.split = split 
@@ -21,6 +21,7 @@ class Places(Dataset):
         self.rescale_size = rescale_size
         self.crop_size = crop_size
         self.dataroot = dataroot
+        self.maskroot = maskroot
         print(f"[Dataloader] Gathering data from {dataroot}...")
         self.initialize_paths()
         self.initialize_processor()
@@ -29,12 +30,6 @@ class Places(Dataset):
         data_list = []
         for root, dirs, files in os.walk(self.dataroot):
             image_files = glob.glob(os.path.join(root, "*.jpg"))
-            # if len(image_files) > 0:
-            #     if self.split == 'train':
-            #         name = root.split("data_large")[-1]
-            #     else:
-            #         name = root.split("test_large")[-1]
-            #     name = "_".join(name.split('/')[2:])
             data_list += [(path, '_'.join(path.split('/')[-3:])) for path in image_files]
         self.data_list = data_list            
 
@@ -77,14 +72,18 @@ class Places(Dataset):
         segmentation = image
         seg_path = img_path
 
-
-
         example = {"image": image,
                    "segmentation": segmentation,
                    "img_path": img_path,
                    "seg_path": seg_path,
                    "filename_": name
                     }
+
+        if self.maskroot is not None:
+            pass
+        else:
+            mask = None
+
         return example
 
     def __len__(self):

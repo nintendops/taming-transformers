@@ -120,7 +120,7 @@ class InpaintingMaster(pl.LightningModule):
 
 
     def get_input(self, key, batch):
-        x = batch[key]
+        x = batch[key].to(self.device)
         if len(x.shape) == 3:
             x = x[..., None]
         if len(x.shape) == 4:
@@ -267,7 +267,7 @@ class InpaintingMaster(pl.LightningModule):
             mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
             # mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/x.shape[-1]))
             # xrec, mask, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)            
-            rec, _, _, quant_z, _, mask_out = self(batch, mask=mask_in, simple_return=False)
+            rec, _, _, quant_z, _, mask_out = self(batch, recomposition=False, mask=mask_in, simple_return=False)
             rec_fstg = VQModel.decode(quant_z)
 
             # linear blending

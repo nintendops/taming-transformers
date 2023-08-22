@@ -22,7 +22,7 @@ from eval_util import *
 # script for evaluating inpainting performance
 
 # fid2993_full, fid36k5_full, ids_places, kid50k_full, pr50k3_full, ppl2_wend, is50k
-metrics = ['fid50k_full']
+metrics = ['fid36k5_full']
 
 def get_parser(**parser_kwargs):
     def str2bool(v):
@@ -65,7 +65,7 @@ def get_parser(**parser_kwargs):
     parser.add_argument(
         "--num-gpus",
         type=int,
-        default=1,
+        default=3,
     )
     parser.add_argument(
         "-n",
@@ -103,14 +103,18 @@ if __name__ == '__main__':
     print("Done!")
    
     # loading checkpoint
-    sd = torch.load(ckpt_path, map_location=device)["state_dict"]
-    print("Loading checkpoint from %s..."%ckpt_path)
-    model.load_state_dict(sd, strict=False)
-    print("Done!")
+    if ckpt_path != "":
+        sd = torch.load(ckpt_path, map_location=device)["state_dict"]
+        print("Loading checkpoint from %s..."%ckpt_path)
+        model.load_state_dict(sd, strict=False)
+        print("Done!")
     
+    if opt.num_gpus > 0:
+        model = torch.nn.DataParallel(model)
+
     # loading dataset
     print("instantiating Dataset...")
-    config.data.params.train.params.split = "validation"
+    config.data.params.test.params.split = "test"
     data = instantiate_from_config(config.data)
     data.prepare_data()
     data.setup()
@@ -120,8 +124,8 @@ if __name__ == '__main__':
 
     # callback function for the generative model
     def generate_results(G, batch):
-        mask = batch['mask']
-        rec =  G(batch, mask=mask, recomposition=True)[0]
+        # mask = batch['mask']
+        rec = G(batch, recomposition=True)[0]
         return rec
 
     kwargs = dict(G=model, dataset=dataset, G_callback=generate_results, device=device, num_gpus=opt.num_gpus)

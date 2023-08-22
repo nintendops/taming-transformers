@@ -2,7 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.refinement_ae.RefinementAE
   params:
-    ckpt_path: logs/2023-06-04T12-39-32_decoder_perceptual_gitfinetune_safe/checkpoints/last.ckpt
+    ckpt_path: logs/2023-06-04T12-39-32_decoder_perceptual_gitfinetune_safedd/checkpoints/last.ckpt
     embed_dim: 256
     n_embed: 1024
     image_key: image
@@ -11,7 +11,7 @@ model:
     first_stage_config:
       target: taming.models.maskgit.MaskGIT
       params:
-        ckpt_path: /data/Haiwei/taming_ckpts/2023-05-18T07-39-35_places256_maskgit_1024_cont/checkpoints/last.ckpt
+        ckpt_path: logs/2023-06-30T12-34-38_places_maskgit_1024/checkpoints/last.ckpt
         cond_stage_key: segmentation
         sampling_ratio: 0.4
         attention_extent: mask
@@ -89,7 +89,7 @@ data:
     train:
       target: taming.data.places365.Places
       params:
-        dataroot: /data/Haiwei/Datasets/Places365/data_large
+        dataroot: /vgldb1/Haiwei/Places365/train/data_large
         crop_size: 256
         rescale: true
         rescale_size: 256
@@ -97,7 +97,7 @@ data:
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /data/Haiwei/Datasets/Places365/test_large
+        dataroot: /vgldb1/Haiwei/Places365/test_large
         crop_size: 256
         rescale: True
         rescale_size: 256

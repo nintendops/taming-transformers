@@ -10,9 +10,9 @@ model:
     vqmodel_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/2023-03-30T02-43-38_places256_vqgan_cont/checkpoints/last.ckpt
+        ckpt_path: logs/places256_vqgan1024_BASE/checkpoints/last.ckpt
         embed_dim: 256
-        n_embed: 8192
+        n_embed: 1024
         ddconfig:
           padding_free: false
           double_z: false
@@ -43,9 +43,9 @@ model:
     encoder_config:
       target: taming.models.refinement_ae.MaskPartialEncoderModel
       params:
-        ckpt_path: logs/2023-04-12T14-25-22_places256_maskencoder_cr48/checkpoints/last.ckpt
+        ckpt_path: logs/2023-05-26T15-25-34_places256_partialencoder_1024_cont/checkpoints/last.ckpt
         embed_dim: 256
-        n_embed: 8192
+        n_embed: 1024
         image_key: "image"
         ddconfig:
           padding_free: false
@@ -69,12 +69,11 @@ model:
     decoder_config:
       target: taming.models.refinement_ae.RefinementAE
       params:
-        ckpt_path: logs/2023-04-17T16-42-06_places256_decoder_partialconv_randommask/checkpoints/last.ckpt
-        # ckpt_path: logs/2023-04-05T07-50-07_places256_refinement_tamencoder_cont/checkpoints/last.ckpt
+        ckpt_path: logs/2023-07-08T03-40-46_decoder_final_finetune/checkpoints/last.ckpt
         embed_dim: 256
-        n_embed: 8192
+        n_embed: 1024
         image_key: image
-        restriction: true
+        restriction: false
         ddconfig:
           padding_free: false
           double_z: false
@@ -107,7 +106,7 @@ model:
     transformer_config:
       target: taming.models.maskgit.MaskGIT
       params:
-        ckpt_path: /data/Haiwei/taming_ckpts/2023-04-18T16-34-25_places256_maskgit_abs_seq_ly40_cont/checkpoints/last.ckpt
+        ckpt_path: logs/2023-06-30T12-34-38_places_maskgit_1024/checkpoints/last.ckpt
         cond_stage_key: segmentation
         sampling_ratio: 0.2
         attention_extent: mask
@@ -115,9 +114,9 @@ model:
         transformer_config:
           target: taming.modules.transformer.mingpt.GPT
           params:
-            vocab_size: 8193
-            block_size: 512  # 257
-            n_layer: 40 # 24,40
+            vocab_size: 1025
+            block_size: 257  
+            n_layer: 24 # 24,40
             n_head: 16
             n_embd: 1408
             embd_pdrop: 0.0
@@ -128,18 +127,10 @@ data:
   target: main.DataModuleFromConfig
   params:
     batch_size: 2
-    train:
-      target: taming.data.places365.Places
-      params:
-        dataroot: /data/Haiwei/Datasets/Places365/data_large
-        crop_size: 256
-        rescale: true
-        rescale_size: 256
-        split: train
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /data/Haiwei/Datasets/Places365/test_large
+        dataroot: /vgldb1/Haiwei/Places365/test_large
         crop_size: 256
         rescale: True
         rescale_size: 256

@@ -33,7 +33,7 @@ import cv2
 #         self.cache          = cache
 
 class MetricOptions:
-    def __init__(self, G=None, G_kwargs={}, dataset_kwargs={}, dataset=None, G_callback=None, num_gpus=1, rank=0, device=None, progress=None, cache=True):
+    def __init__(self, G=None, G_kwargs={}, dataset_kwargs={}, dataset=None, G_callback=None, num_gpus=1, rank=0, device=None, progress=None, cache=False):
         assert 0 <= rank < num_gpus
         self.G              = G
         self.G_kwargs       = dnnlib.EasyDict(G_kwargs)
@@ -195,7 +195,7 @@ class ProgressMonitor:
 def image_normalization(img):
     return ((img + 1.0) * 127.5).clamp(0, 255).round().to(torch.uint8)
 
-def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, max_items=None, **stats_kwargs):
+def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=4, data_loader_kwargs=None, max_items=None, **stats_kwargs):
 
 
     dataset = opts.dataset # dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
@@ -262,7 +262,7 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
 
 #----------------------------------------------------------------------------
 
-def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, batch_gen=4, data_loader_kwargs=None, **stats_kwargs):
+def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, batch_gen=16, data_loader_kwargs=None, **stats_kwargs):
     if data_loader_kwargs is None:
         data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
 

@@ -2,7 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.maskgit.MaskGIT
   params:
-    ckpt_path: /data/Haiwei/taming_ckpts/2023-04-29T13-48-27_places256_maskgit_1024/checkpoints/last.ckpt
+    # ckpt_path: /data/Haiwei/taming_ckpts/2023-04-29T13-48-27_places256_maskgit_1024/checkpoints/last.ckpt
     cond_stage_key: segmentation
     sampling_ratio: 0.2
     attention_extent: mask
@@ -53,7 +53,7 @@ data:
     train:
       target: taming.data.places365.Places
       params:
-        dataroot: /data/Haiwei/Datasets/Places365/data_large
+        dataroot: /vgldb1/Haiwei/Places365/train/data_large
         crop_size: 256
         rescale: True
         rescale_size: 256
@@ -61,7 +61,7 @@ data:
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /data/Haiwei/Datasets/Places365/test_large
+        dataroot: /vgldb1/Haiwei/Places365/test_large
         crop_size: 256
         rescale: True
         rescale_size: 256
