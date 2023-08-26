@@ -12,6 +12,11 @@ from PIL import Image
 
 DEBUG_MODE = False
 
+def readmask(path):
+    mask = cv2.imread(path, cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255.0
+    return mask[..., None]
+
+
 class Places(Dataset):
     def __init__(self, dataroot="", maskroot=None, crop_size=256, rescale=True, rescale_size=256, extension='jpg', split='train'):
         self.name = 'places365'
@@ -31,6 +36,7 @@ class Places(Dataset):
         for root, dirs, files in os.walk(self.dataroot):
             image_files = glob.glob(os.path.join(root, "*.jpg"))
             data_list += [(path, '_'.join(path.split('/')[-3:])) for path in image_files]
+
         self.data_list = data_list            
 
     def initialize_processor(self):
@@ -66,8 +72,29 @@ class Places(Dataset):
         image = (image / 127.5 - 1.0).astype(np.float32)
         return image
 
+    def preprocess_mask(self, mask):
+        image = mask
+        # ---------------------------------------------------
+        # handle cases where image has smaller size than the crop size
+        h,w = image.shape[:2]
+        if min(h,w) < self.crop_size:
+            image = self.safety_rescaler(image=image)
+            image = image['image']
+        # ---------------------------------------------------
+
+        processed = self.preprocessor(image=image)
+        image = processed["image"]
+        return np.round(image)
+
     def get(self, i):
         img_path, name = self.data_list[i]
+
+        mask = None
+        if self.maskroot is not None:
+            img_name = os.path.basename(img_path)
+            img_id = img_name[-10:-4]
+            mask = self.preprocess_mask(readmask(os.path.join(self.maskroot, f"{img_id}.png")))
+
         image = self.preprocess_image(img_path)
         segmentation = image
         seg_path = img_path
@@ -79,10 +106,8 @@ class Places(Dataset):
                    "filename_": name
                     }
 
-        if self.maskroot is not None:
-            pass
-        else:
-            mask = None
+        if mask is not None:
+            example["mask"] = mask
 
         return example
 

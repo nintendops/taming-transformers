@@ -148,6 +148,7 @@ class InpaintingMaster(pl.LightningModule):
 
         if mask is None:
             # large-hole random mask following MAT
+            # mask = box_mask(x.shape, x.device, 0.5, det=True).to(self.device).float()
             mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1])).to(x.device)
 
         x_gt = x        
@@ -164,7 +165,7 @@ class InpaintingMaster(pl.LightningModule):
         z_indices = info[2].reshape(x.shape[0], -1)
 
         # inferring missing codes given the downsampled mask
-        z_indices_complete = Transformer.forward_to_indices(batch, z_indices, mask_out)
+        z_indices_complete = Transformer.forward_to_indices(batch, z_indices, mask_out, temperature=0.5, det=False)
 
         #########################
         # z_indices_complete = Transformer.forward_to_indices(batch, z_indices_ref, mask_out_ref)
@@ -189,11 +190,7 @@ class InpaintingMaster(pl.LightningModule):
 
         if recomposition:
             # linear blending
-            k = 3
-            kernel = torch.ones(1,1,k,k) / k**2
-            pad = k // 2
-            smoothed_mask = F.conv2d(F.pad(mask,(pad,pad,pad,pad),value=1), kernel.to(mask.device), bias=None, padding=0)
-            dec = smoothed_mask * x + (1 - smoothed_mask) * dec
+            dec = mask * x + (1 - mask) * dec
 
         if simple_return:
             return dec, mask
@@ -255,30 +252,40 @@ class InpaintingMaster(pl.LightningModule):
         return mask
 
     @torch.no_grad()
-    def log_images(self, batch, **kwargs):
+    def log_images(self, batch, mask_in=None, **kwargs):
         if self.stage != 'final':
             return self.current_model.log_images(batch, **kwargs)
         else:
             log = dict()
-            VQModel, Encoder, Transformer = self.helper_model
+            VQModel, _, _ = self.helper_model
+            VQModel = VQModel.to(self.device)
             x = self.get_input(self.image_key, batch)
             x = x.to(self.device)
+
+            if 'mask' in batch.keys() and mask_in is None:
+                mask_in = batch['mask'].to(self.device)
+
             # We are always making assumption that the latent block is 16x16 here
-            mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
+            if mask_in is None:
+                mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
+
+            # mask_in = box_mask(x.shape, x.device, 0.15, det=True).to(self.device).float()
             # mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/x.shape[-1]))
             # xrec, mask, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)            
+
             rec, _, _, quant_z, _, mask_out = self(batch, recomposition=False, mask=mask_in, simple_return=False)
             rec_fstg = VQModel.decode(quant_z)
 
             # linear blending
-            k = 3
-            kernel = torch.ones(1,1,k,k) / k**2
-            pad = k // 2
-            smoothed_mask = F.conv2d(F.pad(mask_in,(pad,pad,pad,pad),value=1), kernel.to(mask_in.device), bias=None, padding=0)
+            # k = 3
+            # kernel = torch.ones(1,1,k,k) / k**2
+            # pad = k // 2
+            # smoothed_mask = F.conv2d(F.pad(mask_in,(pad,pad,pad,pad),value=1), kernel.to(mask_in.device), bias=None, padding=0)
 
             # composition
-            rec = smoothed_mask * x + (1 - smoothed_mask) * rec
-            rec_fstg = smoothed_mask * x + (1 - smoothed_mask) * rec_fstg
+            rec = mask_in * x + (1 - mask_in) * rec
+
+            # rec_fstg = smoothed_mask * x + (1 - smoothed_mask) * rec_fstg
             log["inputs"] = x
             log["reconstructions"] = rec
             log["masked_input"] = x * mask_in

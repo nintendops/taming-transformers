@@ -238,7 +238,6 @@ class MaskPartialEncoderModel(pl.LightningModule):
         ######################################
 
         mask_out = mask_out.reshape(B, -1).int()
-
         indices_combined = mask_out * indices_pred.reshape(B, -1) + (1 - mask_out) * gt_z_indices
         xrec = self.decode_to_img(indices_combined.int(), quant_z.shape)
 
@@ -397,6 +396,7 @@ class RefinementAE(pl.LightningModule):
     def forward(self, batch, quant=None, mask_in=None, mask_out=None, return_fstg=True):
 
         input = self.get_input(batch, self.image_key)
+        input = input * mask_in
 
         # first, get a composition of quantized reconstruction and the original image
         if mask_in is None:
@@ -433,17 +433,19 @@ class RefinementAE(pl.LightningModule):
         else:
             h, _ = self.encode(input, mask)
 
-        # TODO: this operation might be worth investigating
-        h = h + quant * ( 1 - mask_out)
 
-        dec = self.decode(h)  
+        # TODO: this operation might be worth investigating (IMPORTANT!)
+        # mask_out_interpolate = F.interpolate(mask, (16,16))
+        h = mask_out * h + quant * (1 - mask_out) * 0.5 + h * (1 - mask_out) * 0.5
+
+        dec = self.decode(h)
 
         # linear blending
-        k = 3
-        kernel = torch.ones(1,1,k,k) / k**2
-        pad = k // 2
-        smoothed_mask = F.conv2d(F.pad(mask,(pad,pad,pad,pad),value=1), kernel.to(mask.device), bias=None, padding=0)
-        dec = smoothed_mask * input + (1 - smoothed_mask) * dec
+        # k = 3
+        # kernel = torch.ones(1,1,k,k) / k**2
+        # pad = k // 2
+        # smoothed_mask = F.conv2d(F.pad(mask,(pad,pad,pad,pad),value=1), kernel.to(mask.device), bias=None, padding=0)
+        # dec = smoothed_mask * input + (1 - smoothed_mask) * dec
 
         # Additional U-Net to refine output
         if self.use_refinement:

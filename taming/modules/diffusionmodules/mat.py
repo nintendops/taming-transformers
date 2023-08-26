@@ -140,12 +140,20 @@ class Conv2dLayerPartialRestrictive(nn.Module):
                 ################
                 mask_ones = torch.full_like(mask, 1.0, dtype=torch.float32).to(mask.device)
                 um1 = F.conv2d(mask_ones, self.weight_maskUpdater, bias=None, stride=self.stride, padding=self.padding)
+
                 update_mask = F.conv2d(mask, self.weight_maskUpdater, bias=None, stride=self.stride, padding=self.padding)
-                # offset = self.padding
-                # mask_padded = F.pad(mask, (offset,offset,offset,offset), mode='constant', value=0.5)
-                # update_mask_padded = F.conv2d(mask_padded, self.weight_maskUpdater, bias=None, stride=self.stride, padding=0)
+
+                # the larger the ratio, the more information the block has
                 mask_ratio_true = update_mask / um1
-                update_mask_restrictive = (mask_ratio_true > self.clamp_ratio).float()
+
+                # update_mask_restrictive = (mask_ratio_true > self.clamp_ratio).float()
+
+                if self.stride > 1:
+                    update_mask_restrictive = F.interpolate(mask, scale_factor=1/self.stride, mode="bilinear") > self.clamp_ratio
+                    update_mask_restrictive = update_mask_restrictive.float()
+                else:
+                    update_mask_restrictive = mask
+
                 ################
                 mask_ratio = self.slide_winsize / (update_mask + 1e-8)
                 # update_mask = torch.clamp(update_mask, 0, 1)  # 0 or 1

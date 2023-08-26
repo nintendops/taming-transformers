@@ -344,6 +344,9 @@ def eval_transformer_log(*, data, idx, model, opt, config, save_path, log_input=
     true_batch['image'] = tensify(image, torch.device('cuda'), permute=False)
     true_batch['segmentation'] = tensify(segmentation, torch.device('cuda'), permute=False) 
 
+    if 'mask' in batch.keys():
+        true_batch['mask'] = tensify(batch['mask'], torch.device('cuda'), permute=True)
+
     for i_sample in range(n_sample):
         print(f"Generating samples for {image_name} at sample #{i_sample}")
         log_images = model.log_images(true_batch)

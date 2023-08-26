@@ -142,8 +142,8 @@ if __name__ == '__main__':
     else:
         dataset = data.datasets['train']
 
-    dataset_iter = iter(data._train_dataloader())
-    length = min(100, len(dataset))
+    dataset_iter = iter(dataset)
+    length = min(200, len(dataset))
     data_select = range(length) # range(len(dataset))
 
     if opt.mode == 'transformer':

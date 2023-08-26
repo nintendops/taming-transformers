@@ -396,7 +396,7 @@ class MaskGIT(pl.LightningModule):
         return self.decode_to_img(index_sample, quant_z.shape, return_quant=return_quant)
 
     @torch.no_grad()
-    def forward_to_indices(self, batch, z_indices, mask, det=True):
+    def forward_to_indices(self, batch, z_indices, mask, temperature=0.5, det=True):
         x, c = self.get_xc(batch)
         x = x.to(device=self.device).float()
         c = c.to(device=self.device).float()
@@ -410,6 +410,7 @@ class MaskGIT(pl.LightningModule):
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
         index_sample = self.sample(z_start_indices.to(device=self.device), 
                                    c_indices.to(device=self.device),
+                                   temperature = temperature,
                                    sample= not det)
         return index_sample
 
