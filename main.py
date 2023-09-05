@@ -10,7 +10,7 @@ import pytorch_lightning as pl
 from pytorch_lightning import seed_everything
 from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback, LearningRateMonitor
-from pytorch_lightning.utilities.distributed import rank_zero_only
+from pytorch_lightning.utilities import rank_zero_only
 
 from taming.data.utils import custom_collate
 import taming.visualizer as V
@@ -208,7 +208,7 @@ class SetupCallback(Callback):
         self.config = config
         self.lightning_config = lightning_config
 
-    def on_pretrain_routine_start(self, trainer, pl_module):
+    def on_fit_start(self, trainer, pl_module):
         if trainer.global_rank == 0:
             # Create logdirs and save configs
             os.makedirs(self.logdir, exist_ok=True)
@@ -235,7 +235,13 @@ class SetupCallback(Callback):
                     os.rename(self.logdir, dst)
                 except FileNotFoundError:
                     pass
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+            if trainer.global_rank == 0 and batch_idx % 10000 == 0:
+                print(f"Summoning checkpoint at idx {batch_idx}.")
+                ckpt_path = os.path.join(self.ckptdir, "last.ckpt")
+                trainer.save_checkpoint(ckpt_path)
 
+    
 
 class ImageLogger(Callback):
     def __init__(self, batch_frequency, max_images, clamp=True, increase_log_steps=True, disable_image_logging=False, visualizer=False, port=8097):
@@ -243,35 +249,37 @@ class ImageLogger(Callback):
         self.disable_image_logging = disable_image_logging
         self.batch_freq = batch_frequency
         self.max_images = max_images
-        self.logger_log_images = {
-            pl.loggers.WandbLogger: self._wandb,
-            pl.loggers.TestTubeLogger: self._testtube,
-        }
+
+        # self.logger_log_images = {
+        #     pl.loggers.WandbLogger: self._wandb,
+        #     pl.loggers.TestTubeLogger: self._testtube,
+        # }
+
         self.log_steps = [2 ** n for n in range(int(np.log2(self.batch_freq)) + 1)]
         if not increase_log_steps:
             self.log_steps = [self.batch_freq]
         self.clamp = clamp
         self.visualizer = V.Visualizer(port=port) if visualizer else None
 
-    @rank_zero_only
-    def _wandb(self, pl_module, images, batch_idx, split):
-        raise ValueError("No way wandb")
-        grids = dict()
-        for k in images:
-            grid = torchvision.utils.make_grid(images[k])
-            grids[f"{split}/{k}"] = wandb.Image(grid)
-        pl_module.logger.experiment.log(grids)
+    # @rank_zero_only
+    # def _wandb(self, pl_module, images, batch_idx, split):
+    #     raise ValueError("No way wandb")
+    #     grids = dict()
+    #     for k in images:
+    #         grid = torchvision.utils.make_grid(images[k])
+    #         grids[f"{split}/{k}"] = wandb.Image(grid)
+    #     pl_module.logger.experiment.log(grids)
 
-    @rank_zero_only
-    def _testtube(self, pl_module, images, batch_idx, split):
-        for k in images:
-            grid = torchvision.utils.make_grid(images[k])
-            grid = (grid+1.0)/2.0 # -1,1 -> 0,1; c,h,w
+    # @rank_zero_only
+    # def _testtube(self, pl_module, images, batch_idx, split):
+    #     for k in images:
+    #         grid = torchvision.utils.make_grid(images[k])
+    #         grid = (grid+1.0)/2.0 # -1,1 -> 0,1; c,h,w
 
-            tag = f"{split}/{k}"
-            pl_module.logger.experiment.add_image(
-                tag, grid,
-                global_step=pl_module.global_step)
+    #         tag = f"{split}/{k}"
+    #         pl_module.logger.experiment.add_image(
+    #             tag, grid,
+    #             global_step=pl_module.global_step)
 
     @rank_zero_only
     def log_local(self, save_dir, split, images,
@@ -324,8 +332,8 @@ class ImageLogger(Callback):
             self.log_local(pl_module.logger.save_dir, split, images,
                            pl_module.global_step, pl_module.current_epoch, batch_idx)
 
-            logger_log_images = self.logger_log_images.get(logger, lambda *args, **kwargs: None)
-            logger_log_images(pl_module, images, pl_module.global_step, split)
+            # logger_log_images = self.logger_log_images.get(logger, lambda *args, **kwargs: None)
+            # logger_log_images(pl_module, images, pl_module.global_step, split)
 
             if is_train:
                 pl_module.train()
@@ -339,10 +347,10 @@ class ImageLogger(Callback):
             return True
         return False
 
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
         self.log_img(pl_module, batch, batch_idx, split="train")
 
-    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
         self.log_img(pl_module, batch, batch_idx, split="val")
 
 
@@ -487,7 +495,7 @@ if __name__ == "__main__":
                 }
             },
             "testtube": {
-                "target": "pytorch_lightning.loggers.TestTubeLogger",
+                "target": "pytorch_lightning.loggers.CSVLogger",
                 "params": {
                     "name": "testtube",
                     "save_dir": logdir,
@@ -517,7 +525,7 @@ if __name__ == "__main__":
 
         modelckpt_cfg = lightning_config.modelcheckpoint or OmegaConf.create()
         modelckpt_cfg = OmegaConf.merge(default_modelckpt_cfg, modelckpt_cfg)
-        trainer_kwargs["checkpoint_callback"] = instantiate_from_config(modelckpt_cfg)
+        trainer_kwargs["callbacks"] = [instantiate_from_config(modelckpt_cfg)]
 
         # add callback which sets up log directory
         default_callbacks_cfg = {
@@ -554,7 +562,7 @@ if __name__ == "__main__":
         }
         callbacks_cfg = lightning_config.callbacks or OmegaConf.create()
         callbacks_cfg = OmegaConf.merge(default_callbacks_cfg, callbacks_cfg)
-        trainer_kwargs["callbacks"] = [instantiate_from_config(callbacks_cfg[k]) for k in callbacks_cfg]
+        trainer_kwargs["callbacks"] += [instantiate_from_config(callbacks_cfg[k]) for k in callbacks_cfg]
 
         trainer = Trainer.from_argparse_args(trainer_opt, **trainer_kwargs)
 

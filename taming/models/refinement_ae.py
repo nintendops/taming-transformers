@@ -395,8 +395,8 @@ class RefinementAE(pl.LightningModule):
 
     def forward(self, batch, quant=None, mask_in=None, mask_out=None, return_fstg=True):
 
-        input = self.get_input(batch, self.image_key)
-        input = input * mask_in
+        input_raw = self.get_input(batch, self.image_key)
+        input = input_raw * mask_in
 
         # first, get a composition of quantized reconstruction and the original image
         if mask_in is None:
@@ -414,7 +414,7 @@ class RefinementAE(pl.LightningModule):
             x_raw, _ = self.first_stage_model(input)
         
         if return_fstg:
-            x_comp = mask * input + (1 - mask) * x_raw
+            x_comp = mask * input_raw + (1 - mask) * x_raw
         ############################################
 
         if quant is None:
@@ -446,6 +446,7 @@ class RefinementAE(pl.LightningModule):
         # pad = k // 2
         # smoothed_mask = F.conv2d(F.pad(mask,(pad,pad,pad,pad),value=1), kernel.to(mask.device), bias=None, padding=0)
         # dec = smoothed_mask * input + (1 - smoothed_mask) * dec
+        dec = input + (1 - mask_in) * dec
 
         # Additional U-Net to refine output
         if self.use_refinement:
