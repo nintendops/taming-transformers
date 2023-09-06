@@ -10,7 +10,7 @@ model:
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: /root/ckpts/places256_vqgan1024_BASE/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/places256_vqgan1024_BASE.ckpt
         embed_dim: 256
         n_embed: 1024
         ddconfig:
@@ -64,11 +64,11 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 3
+    batch_size: 6
     train:
       target: taming.data.places365.Places
       params:
-        dataroot: /root/data/data_large
+        dataroot: /home/chenh/data/data_large
         crop_size: 256
         rescale: true
         rescale_size: 256
@@ -76,7 +76,7 @@ data:
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /root/data/test_large
+        dataroot: /home/chenh/data/test_large
         crop_size: 256
         rescale: True
         rescale_size: 256

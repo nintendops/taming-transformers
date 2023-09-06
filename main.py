@@ -459,17 +459,25 @@ if __name__ == "__main__":
         lightning_config = config.pop("lightning", OmegaConf.create())
         # merge trainer cli with config
         trainer_config = lightning_config.get("trainer", OmegaConf.create())
-        # default to ddp
+
+        # default to ddp 
         trainer_config["distributed_backend"] = "ddp"
+
         for k in nondefault_trainer_args(opt):
             trainer_config[k] = getattr(opt, k)
         if not "gpus" in trainer_config:
-            del trainer_config["distributed_backend"]
+            # del trainer_config["distributed_backend"]
             cpu = True
         else:
+            ngpu = len(trainer_config.gpus.strip(",").split(','))
             gpuinfo = trainer_config["gpus"]
             print(f"Running on GPUs {gpuinfo}")
+            trainer_config["accelerator"] = "gpu"
+            trainer_config["strategy"] = "ddp"
+            trainer_config["devices"] = ngpu
             cpu = False
+            torch.set_float32_matmul_precision('medium')
+
         trainer_opt = argparse.Namespace(**trainer_config)
         lightning_config.trainer = trainer_config
 
