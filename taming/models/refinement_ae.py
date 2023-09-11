@@ -411,7 +411,7 @@ class RefinementAE(pl.LightningModule):
                                                                         det=False, 
                                                                         return_quant=True)    
         if self.first_stage_model_type == 'vae':
-            x_raw, _ = self.first_stage_model(input)
+            x_raw, _ = self.first_stage_model(input_raw)
         
         if return_fstg:
             x_comp = mask * input_raw + (1 - mask) * x_raw
@@ -419,7 +419,7 @@ class RefinementAE(pl.LightningModule):
 
         if quant is None:
             if self.first_stage_model_type == 'vae':
-                quant, _, info = self.first_stage_model.encode(input)
+                quant, _, info = self.first_stage_model.encode(input_raw)
             else:
                 quant = quant_fstg
 
