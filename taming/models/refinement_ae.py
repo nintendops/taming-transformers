@@ -393,7 +393,7 @@ class RefinementAE(pl.LightningModule):
     #     dec = self.decode(quant_b)
     #     return dec
 
-    def forward(self, batch, quant=None, mask_in=None, mask_out=None, return_fstg=True):
+    def forward(self, batch, quant=None, mask_in=None, mask_out=None, return_fstg=True, debug=False):
 
         input_raw = self.get_input(batch, self.image_key)
         input = input_raw * mask_in
@@ -458,7 +458,9 @@ class RefinementAE(pl.LightningModule):
             else:
                 return dec, mask
         else:
-            if return_fstg:                
+            if debug:
+                return dec, mask, mask_out, quant * (1 - mask_out), h * (1 - mask_out)
+            elif return_fstg:                
                 return dec, mask, x_comp
             else:
                 return dec, mask

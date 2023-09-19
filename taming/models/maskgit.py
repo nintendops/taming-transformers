@@ -226,10 +226,19 @@ class MaskGIT(pl.LightningModule):
         return out
 
     @torch.no_grad()
-    def sample(self, x, c, temperature=0.5, sample=False, top_k=None, 
-               callback=lambda k: None):
+    def sample(self, x, c, 
+               sampling_ratio=0.2, 
+               temperature=1.0, 
+               sample=True, 
+               temperature_degradation=0.9, 
+               top_k=None, 
+               callback=lambda k: None, 
+               scheduler = 'cosine',
+               t_scheduler=lambda t,k,d: t*(d**k),
+               return_probs=False
+               ):
 
-        scheduler = self.mask_scheduler
+        # scheduler = self.mask_scheduler
 
         # indices padding
         x = x + 1
@@ -242,16 +251,16 @@ class MaskGIT(pl.LightningModule):
         assert not self.transformer.training
         k_unknown = mask[0].sum()
         length = x.size(1)
-        steps = 1 // self.sampling_ratio # max(1, k_unknown // n_sample) + 2
+        steps = int(1 / sampling_ratio) # max(1, k_unknown // n_sample) + 2
         counter = 0
 
         if scheduler == 'cosine':
             unknowns = (k_unknown.item() * np.cos(math.pi * np.arange(steps) / (2 * steps))).astype(np.int32)
             drawn = unknowns - np.append(unknowns, 0)[1:]
-        #     print(drawn)
-        # else:
-        #     print([int(k_unknown.item() * self.sampling_ratio) for i in np.arange(steps)])
 
+        prob_results = []
+        gathered_idx_info = []
+        
         while True:
             assert x.size(1) <= block_size # make sure model can see conditioning
 
@@ -262,12 +271,15 @@ class MaskGIT(pl.LightningModule):
 
             # scheduling function to determine how much to sample at each step
             if scheduler == 'cosine':
+                # consine sampling
                 n_sample = max(drawn[counter] if counter < len(drawn) else drawn[-1], 1)
             else:
                 # default with linear scheduling
-                n_sample = int(k_unknown.item() * self.sampling_ratio)
+                n_sample = int(k_unknown.item() * sampling_ratio)
 
-            counter += 1
+            t = t_scheduler(temperature, counter, temperature_degradation)
+
+            counter += 1            
             mask_c_indices = torch.full_like(c, 0, dtype=torch.int64).to(x.device)
             mask_c = torch.cat([mask_c_indices, mask], dim=1)
             x_cond = x if x.size(1) <= block_size else x[:, -block_size:]  # crop context if needed
@@ -281,11 +293,12 @@ class MaskGIT(pl.LightningModule):
                 logits, _ = self.transformer(x_cond, mask=None, autoregressive=False)
 
             # pluck the logits at the final step and scale by temperature              
-            logits = logits[:, c.shape[1]:, 1:] / temperature
+            logits = logits[:, c.shape[1]:, 1:] / t
 
             # optionally crop probabilities to only the top k options
             if top_k is not None:
                 logits = self.top_k_logits(logits, top_k)
+
             # apply softmax to convert to probabilities
             probs = F.softmax(logits, dim=-1)
 
@@ -308,17 +321,27 @@ class MaskGIT(pl.LightningModule):
                 _, gathered_idx = torch.topk(gathered_probs, k=1, dim=-1)
                 gathered_idx = gathered_idx[..., -1]
 
+            #### FOR DEBUG ONLY #####
+            if return_probs:
+                select_probs = torch.gather(gathered_probs, 2, gathered_idx.unsqueeze(-1))
+                prob_results.append(select_probs.detach().cpu().numpy())
+                k_candidates_info = (k_candidates).detach().cpu().numpy()
+                gathered_idx_info.append(k_candidates_info)
+            #############################
+
             # updating mask and indices
             for i in range(B):
                 mask[i, k_candidates[i]] = False
                 x[i, (k_candidates[i]+1)] = gathered_idx[i] + 1
 
-            # append to the sequence and continue
-            # x = torch.cat((x, ix), dim=1)
 
         # cut off conditioning
         if not self.use_condGPT:
             x = x[:, c.shape[1]:]
+
+        if return_probs:
+            return x - 1, prob_results, gathered_idx_info
+
         return x - 1
 
     @torch.no_grad()
@@ -396,7 +419,7 @@ class MaskGIT(pl.LightningModule):
         return self.decode_to_img(index_sample, quant_z.shape, return_quant=return_quant)
 
     @torch.no_grad()
-    def forward_to_indices(self, batch, z_indices, mask, temperature=0.5, det=True):
+    def forward_to_indices(self, batch, z_indices, mask, temperature=0.5, det=False):
         x, c = self.get_xc(batch)
         x = x.to(device=self.device).float()
         c = c.to(device=self.device).float()
@@ -450,9 +473,10 @@ class MaskGIT(pl.LightningModule):
             
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
-        index_sample = self.sample(z_start_indices, c_indices,
-                                   sample=True,
-                                   callback=callback if callback is not None else lambda k: None)
+
+        # using default sampling setting
+        index_sample = self.sample(z_start_indices, 
+                                   c_indices)
 
         ####################
         # index_sample = z_indices * mask + (1-mask) * z_indices_gt

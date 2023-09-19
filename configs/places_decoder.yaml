@@ -2,8 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.refinement_ae.RefinementAE
   params:
-    # ckpt_path: logs/2023-05-16T18-06-38_randommask_decoder_preceptual/checkpoints/last.ckpt
-    embed_dim: 256
+    ckpt_path: logs/decoder.ckpt
     n_embed: 1024
     image_key: image
     restriction: false
@@ -68,7 +67,7 @@ data:
     train:
       target: taming.data.places365.Places
       params:
-        dataroot: /home/chenh/data/data_large
+        dataroot: /home/ICT2000/chenh/Haiwei/Datasets/Places365/data_large
         crop_size: 256
         rescale: true
         rescale_size: 256
@@ -76,7 +75,7 @@ data:
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /home/chenh/data/test_large
+        dataroot: /home/ICT2000/chenh/Haiwei/Datasets/Places365/test_large
         crop_size: 256
         rescale: True
         rescale_size: 256
