@@ -342,6 +342,8 @@ class RefinementAE(pl.LightningModule):
         self.mask_lower = mask_lower
         self.mask_upper = mask_upper
 
+        self.att = torch.nn.Conv2d(embed_dim, 1, 1)
+
     def init_from_ckpt(self, path, ignore_keys=list()):
         sd = torch.load(path, map_location="cpu")["state_dict"]
         keys = list(sd.keys())
@@ -393,7 +395,7 @@ class RefinementAE(pl.LightningModule):
     #     dec = self.decode(quant_b)
     #     return dec
 
-    def forward(self, batch, quant=None, mask_in=None, mask_out=None, return_fstg=True):
+    def forward(self, batch, quant=None, mask_in=None, mask_out=None, return_fstg=True, debug=False):
 
         input_raw = self.get_input(batch, self.image_key)
         input = input_raw * mask_in
@@ -433,10 +435,13 @@ class RefinementAE(pl.LightningModule):
         else:
             h, _ = self.encode(input, mask)
 
+        w1 = torch.sigmoid(self.att(h))
 
         # TODO: this operation might be worth investigating (IMPORTANT!)
         # mask_out_interpolate = F.interpolate(mask, (16,16))
-        h = mask_out * h + quant * (1 - mask_out) * 0.5 + h * (1 - mask_out) * 0.5
+        
+        h = mask_out * h + h * (1 - mask_out) * w1 + quant * (1 - mask_out) * (1 - w1)
+        # h = mask_out * h + quant * (1 - mask_out) * 0.5 + h * (1 - mask_out) * 0.5
 
         dec = self.decode(h)
 
@@ -458,7 +463,9 @@ class RefinementAE(pl.LightningModule):
             else:
                 return dec, mask
         else:
-            if return_fstg:                
+            if debug:
+                return dec, mask, mask_out, quant * (1 - mask_out), h * (1 - mask_out)
+            elif return_fstg:                
                 return dec, mask, x_comp
             else:
                 return dec, mask

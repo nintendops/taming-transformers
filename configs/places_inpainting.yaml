@@ -70,7 +70,7 @@ model:
     decoder_config:
       target: taming.models.refinement_ae.RefinementAE
       params:
-        ckpt_path: logs/2023-05-16T18-06-38_randommask_decoder_preceptual/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/decoder_beta_pt.ckpt
         # ckpt_path: logs/2023-07-08T03-40-46_decoder_final_finetune/checkpoints/last.ckpt
         embed_dim: 256
         n_embed: 1024

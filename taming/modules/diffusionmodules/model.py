@@ -153,15 +153,13 @@ class ResnetBlock(nn.Module):
 
         return x+h
 
-
-
 class PartialResnetBlock(nn.Module):
     def __init__(self, *, 
                  in_channels, 
                  out_channels=None, 
                  conv_shortcut=False, 
                  conv_choice=MAT.Conv2dLayerPartialRestrictive,
-                 clamp_ratio=0.48,
+                 clamp_ratio=0.25,
                  dropout):
 
         super().__init__()
@@ -175,30 +173,30 @@ class PartialResnetBlock(nn.Module):
         self.conv1 = conv_choice(in_channels,
                                  out_channels,
                                  kernel_size=3,
-                                 stride=1,
-                                 clamp_ratio=clamp_ratio)
+                                 stride=1
+                                 )
 
         self.norm2 = Normalize(out_channels)
         self.dropout = torch.nn.Dropout(dropout)
         self.conv2 = conv_choice(out_channels,
                                  out_channels,
                                  kernel_size=3,
-                                 stride=1,
-                                 clamp_ratio=clamp_ratio)
+                                 stride=1
+                                 )
 
         if self.in_channels != self.out_channels:
             if self.use_conv_shortcut:
                 self.conv_shortcut = conv_choice(in_channels,
                                                  out_channels,
                                                  kernel_size=3,
-                                                 stride=1,
-                                                 clamp_ratio=clamp_ratio)
+                                                 stride=1
+                                                 )
             else:
                 self.nin_shortcut = conv_choice(in_channels,
                                                 out_channels,
                                                 kernel_size=1,
-                                                stride=1,
-                                                clamp_ratio=clamp_ratio)
+                                                stride=1
+                                                )
 
     def forward(self, x, mask):
         h = x
@@ -638,10 +636,8 @@ class PartialEncoder(nn.Module):
         # downsampling
         self.conv_in = PartialConv(self.in_channels,
                                    self.ch,
-                                   clamp_ratio=self.update_clamp(),
                                    kernel_size=3,
                                    stride=1)
-
 
         curr_res = resolution
         in_ch_mult = (1,)+tuple(ch_mult)
@@ -655,8 +651,7 @@ class PartialEncoder(nn.Module):
                 block.append(PartialResnetBlock(in_channels=block_in,
                                                 out_channels=block_out,
                                                 conv_choice=conv_choice,
-                                                dropout=dropout,
-                                                clamp_ratio=self.update_clamp()
+                                                dropout=dropout
                                                 ))
                 block_in = block_out
                 if curr_res in attn_resolutions:
@@ -665,7 +660,7 @@ class PartialEncoder(nn.Module):
             down.block = block
             down.attn = attn
             if i_level != self.num_resolutions-1:
-                down.downsample = PartialConv(block_in, block_in, kernel_size=3, stride=2, clamp_ratio=self.update_clamp())
+                down.downsample = PartialConv(block_in, block_in, kernel_size=3, stride=2)
                 curr_res = curr_res // 2
             self.down.append(down)
 
@@ -674,22 +669,19 @@ class PartialEncoder(nn.Module):
         self.mid.block_1 = PartialResnetBlock(in_channels=block_in,
                                        out_channels=block_in,
                                        conv_choice=conv_choice,
-                                       dropout=dropout,
-                                       clamp_ratio=self.update_clamp())
+                                       dropout=dropout)
         self.mid.attn_1 = AttnBlock(block_in)
         self.mid.block_2 = PartialResnetBlock(in_channels=block_in,
                                        out_channels=block_in,
                                        conv_choice=conv_choice,
-                                       dropout=dropout,
-                                       clamp_ratio=self.update_clamp())
+                                       dropout=dropout)
 
         # end
         self.norm_out = Normalize(block_in)
         self.conv_out = PartialConv(block_in,
                                     2*z_channels if double_z else z_channels,
                                     kernel_size=3,
-                                    stride=1,
-                                    clamp_ratio=self.update_clamp())
+                                    stride=1)
 
     def update_clamp(self):
         self.clamp_counter += 1
