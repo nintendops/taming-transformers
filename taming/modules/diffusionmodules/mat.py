@@ -82,6 +82,7 @@ class Conv2dLayerPartial(nn.Module):
             self.conv = Conv2dLayer(in_channels, out_channels, kernel_size, bias, activation, up, stride, resample_filter,
                                         conv_clamp, trainable)
 
+        self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size, bias=bias, stride=stride, padding=kernel_size//2)
         self.weight_maskUpdater = torch.ones(1, 1, kernel_size, kernel_size)
         self.slide_winsize = kernel_size ** 2
         self.stride = stride
