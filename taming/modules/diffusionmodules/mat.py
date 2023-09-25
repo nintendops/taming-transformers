@@ -72,10 +72,15 @@ class Conv2dLayerPartial(nn.Module):
                  resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
                  conv_clamp      = None,         # Clamp the output to +-X, None = disable clamping.
                  trainable       = True,         # Update the weights of this layer during training?
+                 simple_conv     = True
                  ):
         super().__init__()
-        self.conv = Conv2dLayer(in_channels, out_channels, kernel_size, bias, activation, up, stride, resample_filter,
-                                conv_clamp, trainable)
+
+        if simple_conv:
+            self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size, bias=bias, stride=stride, padding=kernel_size//2)
+        else:
+            self.conv = Conv2dLayer(in_channels, out_channels, kernel_size, bias, activation, up, stride, resample_filter,
+                                        conv_clamp, trainable)
 
         self.weight_maskUpdater = torch.ones(1, 1, kernel_size, kernel_size)
         self.slide_winsize = kernel_size ** 2
@@ -92,7 +97,6 @@ class Conv2dLayerPartial(nn.Module):
                 update_mask = torch.clamp(update_mask, 0, 1)  # 0 or 1
                 mask_ratio = torch.mul(mask_ratio, update_mask)
             x = self.conv(x)
-            # mask ratio: like the mask image but smoothed and amplified near boundaries (e.g. masked area = 0, original area = 1, boundary area in [1,9])
             x = torch.mul(x, mask_ratio)
             return x, update_mask
         else:
@@ -110,7 +114,7 @@ class Conv2dLayerPartialRestrictive(nn.Module):
                  in_channels,                    # Number of input channels.
                  out_channels,                   # Number of output channels.
                  kernel_size,                    # Width and height of the convolution kernel.
-                 clamp_ratio     = 0.48,
+                 clamp_ratio     = 0.25,
                  bias            = True,         # Apply additive bias before the activation function?
                  activation      = 'relu',     # Activation function: 'relu', 'lrelu', etc.
                  up              = 1,            # Integer upsampling factor.
@@ -118,11 +122,16 @@ class Conv2dLayerPartialRestrictive(nn.Module):
                  resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.
                  conv_clamp      = None,         # Clamp the output to +-X, None = disable clamping.
                  trainable       = True,         # Update the weights of this layer during training?
+                 simple_conv     = True,
                  ):
         super().__init__()
-        self.conv = Conv2dLayer(in_channels, out_channels, kernel_size, bias, activation, up, stride, resample_filter,
-                                conv_clamp, trainable)
 
+        if simple_conv:
+            self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size, bias=bias, stride=stride, padding=kernel_size//2)
+        else:
+            self.conv = Conv2dLayer(in_channels, out_channels, kernel_size, bias, activation, up, stride, resample_filter,
+                                    conv_clamp, trainable)
+            
         self.weight_maskUpdater = torch.ones(1, 1, kernel_size, kernel_size)
         self.slide_winsize = kernel_size ** 2
         self.stride = stride

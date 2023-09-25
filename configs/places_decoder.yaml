@@ -3,6 +3,7 @@ model:
   target: taming.models.refinement_ae.RefinementAE
   params:
     ckpt_path: logs/decoder.ckpt
+    embed_dim: 256
     n_embed: 1024
     image_key: image
     restriction: false
