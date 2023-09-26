@@ -720,7 +720,7 @@ class RefinementUNet(pl.LightningModule):
         self.first_stage_model = model
         if initialize_current:
             self.encoder = copy.deepcopy(model.encoder)
-            self.bottleneck_conv = copy.deepcopy(model.bottleneck_conv)
+            self.bottleneck_conv = copy.deepcopy(model.quant_conv)
             self.post_bottleneck_conv = copy.deepcopy(model.post_quant_conv)
             self.decoder = copy.deepcopy(model.decoder)
 
@@ -767,9 +767,9 @@ class RefinementUNet(pl.LightningModule):
 
         # forward pass with the recomposed image
         h = self.encode(x_comp)
-        dec = self.decoder(h)
+        dec = self.decode(h)
         dec = input + (1 - mask) * dec
-        return dec, mask
+        return dec, mask, x_comp
 
     def get_input(self, batch, k):
         x = batch[k]
