@@ -66,7 +66,7 @@ class Conv2dLayerPartial(nn.Module):
                  out_channels,                   # Number of output channels.
                  kernel_size,                    # Width and height of the convolution kernel.
                  bias            = True,         # Apply additive bias before the activation function?
-                 activation      = 'relu',     # Activation function: 'relu', 'lrelu', etc.
+                 activation      = 'relu',       # Activation function: 'relu', 'lrelu', etc.
                  up              = 1,            # Integer upsampling factor.
                  stride          = 1,            # Integer downsampling factor.
                  resample_filter = [1,3,3,1],    # Low-pass filter to apply when resampling activations.

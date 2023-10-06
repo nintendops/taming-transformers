@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 from taming.modules.diffusionmodules.core_layers import Conv2dBlock as ConvBlock
 import taming.modules.diffusionmodules.mat as MAT
+import taming.modules.diffusionmodules.stylegan as StyleGAN
 
 def get_timestep_embedding(timesteps, embedding_dim):
     """
@@ -221,6 +222,72 @@ class PartialResnetBlock(nn.Module):
                 x, m = self.nin_shortcut(x, m)
 
         return x+h, m
+
+
+
+class StyleGANResnetBlock(nn.Module):
+    def __init__(self, *, in_channels, out_channels=None, w_dim, resolution, conv_shortcut=False,
+                 dropout, temb_channels=512, padding_free=False):
+        super().__init__()
+        self.in_channels = in_channels
+        out_channels = in_channels if out_channels is None else out_channels
+        self.out_channels = out_channels
+        self.use_conv_shortcut = conv_shortcut
+        conv_choice = torch.nn.Conv2d
+        # self.norm1 = Normalize(in_channels)
+        self.conv1 = StyleGAN.SynthesisLayer(in_channels,
+                                             out_channels,
+                                             w_dim, 
+                                             resolution,
+                                             kernel_size=3,
+                                             up=1)
+        if temb_channels > 0:
+            self.temb_proj = torch.nn.Linear(temb_channels,
+                                             out_channels)
+        # self.norm2 = Normalize(out_channels)
+        self.dropout = torch.nn.Dropout(dropout)
+        self.conv2 = conv_choice(out_channels,
+                                 out_channels,
+                                 kernel_size=3,
+                                 stride=1,
+                                 padding=1)
+
+        if self.in_channels != self.out_channels:
+            if self.use_conv_shortcut:
+                self.conv_shortcut = conv_choice(in_channels,
+                                                 out_channels,
+                                                 kernel_size=3,
+                                                 stride=1,
+                                                 padding=1)
+            else:
+                self.nin_shortcut = torch.nn.Conv2d(in_channels,
+                                                    out_channels,
+                                                    kernel_size=1,
+                                                    stride=1,
+                                                    padding=0)
+
+    def forward(self, x, ws, temb):
+        h = x
+        # h = self.norm1(h)
+        h = nonlinearity(h)
+        h = self.conv1(h, ws)
+
+        if temb is not None:
+            h = h + self.temb_proj(nonlinearity(temb))[:,:,None,None]
+
+        # h = self.norm2(h)
+        # h = nonlinearity(h)
+
+        h = self.dropout(h)
+        h = self.conv2(h)
+
+        if self.in_channels != self.out_channels:
+            if self.use_conv_shortcut:
+                x = self.conv_shortcut(x)
+            else:
+                x = self.nin_shortcut(x)
+
+        return x+h
 
 
 class AttnBlock(nn.Module):
@@ -1149,6 +1216,137 @@ class Decoder(nn.Module):
         h = nonlinearity(h)
         h = self.conv_out(h)
         return h, feat
+
+class StyleGANDecoder(nn.Module):
+    def __init__(self, *, ch, out_ch, w_dim=512, ch_mult=(1,2,4,8), num_res_blocks,
+                 attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
+                 resolution, z_channels, give_pre_end=False, padding_free=False, **ignorekwargs):
+        super().__init__()
+        self.ch = ch
+        self.temb_ch = 0
+        self.num_resolutions = len(ch_mult)
+        self.num_res_blocks = num_res_blocks
+        self.resolution = resolution
+        self.in_channels = in_channels
+        self.give_pre_end = give_pre_end
+
+        # compute in_ch_mult, block_in and curr_res at lowest res
+        in_ch_mult = (1,)+tuple(ch_mult)
+        block_in = ch*ch_mult[self.num_resolutions-1]
+        curr_res = resolution // 2**(self.num_resolutions-1)
+        self.z_shape = (1,z_channels,curr_res,curr_res)
+        print("Working with z of shape {} = {} dimensions.".format(
+            self.z_shape, np.prod(self.z_shape)))
+
+        # z to block_in
+        self.conv_in = StyleGAN.SynthesisLayer(z_channels,
+                                               block_in,
+                                               w_dim,
+                                               curr_res,
+                                               kernel_size=3,
+                                               up=1)
+        # middle
+        self.mid = nn.Module()
+        self.mid.block_1 = StyleGANResnetBlock(in_channels=block_in,
+                                               out_channels=block_in,
+                                               w_dim=w_dim,
+                                               resolution=curr_res,
+                                               temb_channels=self.temb_ch,
+                                               dropout=dropout,
+                                               padding_free=padding_free)
+        self.mid.attn_1 = AttnBlock(block_in)
+        self.mid.block_2 = StyleGANResnetBlock(in_channels=block_in,
+                                               out_channels=block_in,
+                                               w_dim=w_dim,
+                                               resolution=curr_res,
+                                               temb_channels=self.temb_ch,
+                                               dropout=dropout,
+                                               padding_free=padding_free)
+
+        # upsampling
+        self.up = nn.ModuleList()
+        for i_level in reversed(range(self.num_resolutions)):
+            block = nn.ModuleList()
+            attn = nn.ModuleList()
+            block_out = ch*ch_mult[i_level]
+            for i_block in range(self.num_res_blocks+1):
+                block.append(StyleGANResnetBlock(in_channels=block_in,
+                                                 out_channels=block_out,
+                                                 w_dim=w_dim,
+                                                 resolution=curr_res,
+                                                 temb_channels=self.temb_ch,
+                                                 dropout=dropout,
+                                                 padding_free=padding_free))
+                block_in = block_out
+                if curr_res in attn_resolutions:
+                    attn.append(AttnBlock(block_in))
+            up = nn.Module()
+            up.block = block
+            up.attn = attn
+            if i_level != 0:
+                up.upsample = Upsample(block_in, resamp_with_conv)
+                curr_res = curr_res * 2
+            self.up.insert(0, up) # prepend to get consistent order
+
+        # end
+        self.norm_out = Normalize(block_in)
+        self.conv_out = torch.nn.Conv2d(block_in,
+                                        out_ch,
+                                        kernel_size=3,
+                                        stride=1,
+                                        padding=1)
+
+
+    def _map(self, z):
+        return z
+
+    def _generate(self, z):
+        h, _ = self.forward(z)
+        return h
+
+    def forward(self, z, ws, target_i_level=0):
+        #assert z.shape[1:] == self.z_shape[1:]
+        self.last_z_shape = z.shape
+
+        # timestep embedding
+        temb = None
+
+        # print("Tensor In: Shape", z.shape)
+        # import ipdb; ipdb.set_trace()
+
+        # z to block_in
+        h = self.conv_in(z, ws)
+        # print("Tensor conv_in: Shape", h.shape)
+        # import ipdb; ipdb.set_trace()
+
+        # middle
+        h = self.mid.block_1(h, ws, temb)
+
+        h = self.mid.attn_1(h)
+        h = self.mid.block_2(h, ws, temb)
+
+        feat = h if target_i_level == 0 else None
+
+        # upsampling
+        for i_level in reversed(range(self.num_resolutions)):
+            for i_block in range(self.num_res_blocks+1):
+                h = self.up[i_level].block[i_block](h, ws, temb)
+                if len(self.up[i_level].attn) > 0:
+                    h = self.up[i_level].attn[i_block](h)
+            if i_level != 0:
+                h = self.up[i_level].upsample(h)
+                if i_level == target_i_level:
+                    feat = h
+
+        # end
+        if self.give_pre_end:
+            return h, feat
+
+        # h = self.norm_out(h)
+        # h = nonlinearity(h)
+        h = self.conv_out(h)
+        return h, feat
+
 
 
 class VUNet(nn.Module):
