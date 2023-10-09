@@ -1,19 +1,19 @@
 model:
   base_learning_rate: 4.5e-06
-  target: taming.models.refinement_ae.RefinementAE
+  target: taming.models.refinement_ae.StyleAE
   params:
-    ckpt_path: logs/2023-06-04T12-39-32_decoder_perceptual_gitfinetune_safe/checkpoints/last.ckpt
+    ckpt_path: logs/2023-10-05T19-44-28_styleGAN_decoder_large_mask/checkpoints/last.ckpt
     embed_dim: 256
     n_embed: 1024
     image_key: image
-    restriction: false
+    restriction: true
     first_stage_model_type: 'transformer'
     first_stage_config:
       target: taming.models.maskgit.MaskGIT
       params:
-        ckpt_path: logs/2023-06-30T12-34-38_places_maskgit_1024/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/maskgit_ly40.ckpt
         cond_stage_key: segmentation
-        sampling_ratio: 0.4
+        sampling_ratio: 0.2
         attention_extent: mask
         mask_on_latent: true
         transformer_config:
@@ -21,7 +21,7 @@ model:
           params:
             vocab_size: 1025
             block_size: 257  # 257
-            n_layer: 24 # 24,40
+            n_layer: 40 # 24,40
             n_head: 16
             n_embd: 1408
             embd_pdrop: 0.0
@@ -30,7 +30,7 @@ model:
         first_stage_config:
           target: taming.models.vqgan.VQModel
           params:
-            ckpt_path: logs/places256_vqgan1024_BASE/checkpoints/last.ckpt
+            ckpt_path: logs/ckpts/places256_vqgan1024_BASE.ckpt
             embed_dim: 256
             n_embed: 1024
             ddconfig:
@@ -85,11 +85,11 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 8
+    batch_size: 7
     train:
       target: taming.data.places365.Places
       params:
-        dataroot: /vgldb1/Haiwei/Places365/train/data_large
+        dataroot: /home/chenh/data/data_large
         crop_size: 256
         rescale: true
         rescale_size: 256
@@ -97,7 +97,7 @@ data:
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /vgldb1/Haiwei/Places365/test_large
+        dataroot: /home/chenh/data/test_large
         crop_size: 256
         rescale: True
         rescale_size: 256

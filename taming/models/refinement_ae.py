@@ -399,10 +399,10 @@ class StyleAE(pl.LightningModule):
         else:
             mask = mask_in
 
-        ###### for comparison only ################
+        ##############################################
         if self.first_stage_model_type == 'transformer':
             x_raw, quant_fstg = self.first_stage_model.forward_to_recon(batch, 
-                                                                        mask=mask_out, 
+                                                                        mask=mask, 
                                                                         det=False, 
                                                                         return_quant=True)    
         if self.first_stage_model_type == 'vae':
@@ -461,9 +461,9 @@ class StyleAE(pl.LightningModule):
         return x.float().to(self.device)
 
     def get_mask(self, shape, device):
-        # p = random.uniform(self.mask_lower, self.mask_upper)
+        # p = random.uniform(0.7, 0.95)
         # return box_mask(shape, device, p)
-        return torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0.1,0.4])).to(device)
+        return torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0.2,0.7])).to(device)
         # return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
 
     def get_mask_eval(self, shape, device):
@@ -1118,9 +1118,9 @@ class RefinementUNet(pl.LightningModule):
         return x.float().to(self.device)
 
     def get_mask(self, shape, device):
-        # p = random.uniform(self.mask_lower, self.mask_upper)
-        # return box_mask(shape, device, p)
-        return torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0.1,0.4])).to(device)
+        p = random.uniform(self.mask_lower, self.mask_upper)
+        return box_mask(shape, device, p)
+        # return torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0.1,0.4])).to(device)
         # return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
 
     def get_mask_eval(self, shape, device):

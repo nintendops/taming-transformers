@@ -231,7 +231,7 @@ class MaskGIT(pl.LightningModule):
                temperature=1.0, 
                sample=True, 
                temperature_degradation=0.9, 
-               top_k=None, 
+               top_k=1000, 
                callback=lambda k: None, 
                scheduler = 'cosine',
                t_scheduler=lambda t,k,d: t*(d**k),
@@ -393,7 +393,7 @@ class MaskGIT(pl.LightningModule):
         return quant_z
 
     @torch.no_grad()
-    def forward_to_recon(self, batch, mask=None, det=True, return_quant=False):
+    def forward_to_recon(self, batch, mask=None, det=False, return_quant=False):
         '''
         similar to log image, but return a single image tensor given the default mask function instead of logging results
 
