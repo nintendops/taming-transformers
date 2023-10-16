@@ -231,7 +231,7 @@ class MaskGIT(pl.LightningModule):
                temperature=1.0, 
                sample=True, 
                temperature_degradation=0.9, 
-               top_k=1000, 
+               top_k=50, 
                callback=lambda k: None, 
                scheduler = 'cosine',
                t_scheduler=lambda t,k,d: t*(d**k),
@@ -419,7 +419,7 @@ class MaskGIT(pl.LightningModule):
         return self.decode_to_img(index_sample, quant_z.shape, return_quant=return_quant)
 
     @torch.no_grad()
-    def forward_to_indices(self, batch, z_indices, mask, temperature=0.5, det=False):
+    def forward_to_indices(self, batch, z_indices, mask, det=False):
         x, c = self.get_xc(batch)
         x = x.to(device=self.device).float()
         c = c.to(device=self.device).float()
@@ -433,7 +433,6 @@ class MaskGIT(pl.LightningModule):
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
         index_sample = self.sample(z_start_indices.to(device=self.device), 
                                    c_indices.to(device=self.device),
-                                   temperature = temperature,
                                    sample= not det)
         return index_sample
 
@@ -442,7 +441,6 @@ class MaskGIT(pl.LightningModule):
     def log_images(self, batch, temperature=None, top_k=None, callback=None, lr_interface=False, composition=True, **kwargs):
         
         log = dict()
-
         x, c = self.get_xc(batch)
         x = x.to(device=self.device).float()
         c = c.to(device=self.device).float()
@@ -460,7 +458,6 @@ class MaskGIT(pl.LightningModule):
         quant_c, c_indices = self.encode_to_c(c)
         gH, gW = quant_z.shape[2:]
 
-
         # inpainting sample
         if self.mask_on_latent:
             mask = self.box_mask(z_indices, p=pkeep, det=True)
@@ -470,7 +467,10 @@ class MaskGIT(pl.LightningModule):
             image_mask = mask_in
             mask = mask_out.reshape(mask_out.shape[0], -1).int()
             _, z_indices_recon = self.encode_to_z(x)
-            
+        
+        import ipdb; ipdb.set_trace()
+
+
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
 

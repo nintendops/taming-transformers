@@ -111,9 +111,9 @@ if __name__ == '__main__':
 
     # key configuration: whether the model is conditional or not
     ###################################################
-    unconditional = config.model.params.cond_stage_config == "__is_unconditional__"
-    if unconditional:
-        print("Using an unconditional model!")
+    # unconditional = config.model.params.cond_stage_config == "__is_unconditional__"
+    # if unconditional:
+    #     print("Using an unconditional model!")
     ###################################################
     
     # instantiate model

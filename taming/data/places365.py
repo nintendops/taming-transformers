@@ -93,7 +93,10 @@ class Places(Dataset):
         if self.maskroot is not None:
             img_name = os.path.basename(img_path)
             img_id = img_name[-10:-4]
-            mask = self.preprocess_mask(readmask(os.path.join(self.maskroot, f"{img_id}.png")))
+            #################
+            img_id = int(img_id) - 1 
+            #################
+            mask = self.preprocess_mask(readmask(os.path.join(self.maskroot, f"{img_id:06d}.png")))
 
         image = self.preprocess_image(img_path)
         segmentation = image

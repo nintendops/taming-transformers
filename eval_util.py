@@ -322,7 +322,7 @@ def eval_transformer_log(*, data, idx, model, opt, config, save_path, log_input=
     
     # ---------------------- first log the input data -----------------------------
     image = batch['image']
-    unconditional = config.model.params.cond_stage_config == "__is_unconditional__"
+    unconditional = True # config.model.params.cond_stage_config == "__is_unconditional__"
     
     if unconditional:
         segmentation = image

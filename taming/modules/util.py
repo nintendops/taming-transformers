@@ -83,9 +83,9 @@ def RandomMask(s, hole_range=[0,1]):
         def MultiFill(max_tries, max_size):
             for _ in range(np.random.randint(max_tries)):
                 Fill(max_size)
-        MultiFill(int(5 * coef), s // 2)
-        MultiFill(int(3 * coef), s)
-        mask = np.logical_and(mask, 1 - RandomBrush(int(9 * coef), s))  # hole denoted as 0, reserved as 1
+        MultiFill(int(5 * coef), s // 2) # 3
+        MultiFill(int(3 * coef), s)      # 2
+        mask = np.logical_and(mask, 1 - RandomBrush(int(9 * coef), s))  # hole denoted as 0, reserved as 1 # 4
         hole_ratio = 1 - np.mean(mask)
         if hole_range is not None and (hole_ratio <= hole_range[0] or hole_ratio >= hole_range[1]):
             continue

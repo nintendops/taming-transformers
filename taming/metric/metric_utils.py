@@ -18,6 +18,7 @@ import dnnlib
 import math
 import cv2
 
+from tqdm import tqdm
 #----------------------------------------------------------------------------
 
 # class MetricOptions:
@@ -195,7 +196,8 @@ class ProgressMonitor:
 def image_normalization(img):
     return ((img + 1.0) * 127.5).clamp(0, 255).round().to(torch.uint8)
 
-def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=4, data_loader_kwargs=None, max_items=None, **stats_kwargs):
+
+def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, max_items=None, **stats_kwargs):
 
 
     dataset = opts.dataset # dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
@@ -241,8 +243,8 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
     # import ipdb; ipdb.set_trace()
 
     # DATASET LOOP
-    for batch in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size,
-                                                       **data_loader_kwargs):
+    for batch in tqdm(torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size,
+                                                       **data_loader_kwargs)):
         images = image_normalization(batch['image']) # get_image(batch)
         images = images.permute(0, 3, 1, 2).to(memory_format=torch.contiguous_format)
 
@@ -262,7 +264,7 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
 
 #----------------------------------------------------------------------------
 
-def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, batch_gen=16, data_loader_kwargs=None, **stats_kwargs):
+def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, batch_gen=8, data_loader_kwargs=None, **stats_kwargs):
     if data_loader_kwargs is None:
         data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
 
@@ -299,7 +301,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
     #                                                           batch_size=batch_size,
     #                                                           **data_loader_kwargs):
 
-    for batch in torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size, **data_loader_kwargs):
+    for batch in tqdm(torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size, **data_loader_kwargs)):
         images = []
 
         # --------------------------------------------------------------------------------------
@@ -315,11 +317,24 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
 
         B = batch['image'].shape[0]
         for i in range(0, B, batch_gen):
-            end_idx = min(B, i + batch_gen)
+            end_idx = min(B, i + batch_gen)   
+
             new_batch = dict(image=batch['image'][i:end_idx])
+            if 'mask' in batch.keys():
+                masks = batch['mask'][i:end_idx]
+                masks[:,:,0,:] = 1
+                new_batch['mask'] = masks
+
             image_batch_gen = image_normalization(run_generator(G, new_batch))
             images.append(image_batch_gen)
+            # from skimage.io import imsave
+            # im_np = image_batch_gen.detach().cpu().numpy().transpose(0,2,3,1)
+            # for j in range(im_np.shape[0]):
+            #     imsave(f'{j}.png', im_np[j])
+            # import ipdb; ipdb.set_trace()
+
         images = torch.cat(images, dim=0)
+
 
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])

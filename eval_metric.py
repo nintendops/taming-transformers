@@ -65,7 +65,7 @@ def get_parser(**parser_kwargs):
     parser.add_argument(
         "--num-gpus",
         type=int,
-        default=3,
+        default=1,
     )
     parser.add_argument(
         "-n",
@@ -93,7 +93,7 @@ if __name__ == '__main__':
     os.makedirs(save_path, exist_ok=True)
     config = load_config(config_path)
 
-    unconditional = config.model.params.cond_stage_config == "__is_unconditional__"
+    unconditional = True # config.model.params.cond_stage_config == "__is_unconditional__"
     if unconditional:
         print("Using an unconditional model!")
     
@@ -125,7 +125,8 @@ if __name__ == '__main__':
     # callback function for the generative model
     def generate_results(G, batch):
         # mask = batch['mask']
-        rec = G(batch, recomposition=True)[0]
+        with torch.no_grad():
+            rec = G(batch, recomposition=True)[0]
         return rec
 
     kwargs = dict(G=model, dataset=dataset, G_callback=generate_results, device=device, num_gpus=opt.num_gpus)

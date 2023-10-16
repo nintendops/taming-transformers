@@ -10,7 +10,7 @@ model:
     vqmodel_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/places256_vqgan1024_BASE/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/places256_vqgan1024_BASE.ckpt
         embed_dim: 256
         n_embed: 1024
         ddconfig:
@@ -43,7 +43,7 @@ model:
     encoder_config:
       target: taming.models.refinement_ae.MaskPartialEncoderModel
       params:
-        ckpt_path: logs/2023-05-26T15-25-34_places256_partialencoder_1024_cont/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/2023-05-26T15-25-34_places256_partialencoder_1024_cont.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: "image"
@@ -68,13 +68,13 @@ model:
           dropout: 0.0
     ################## Decoder configuration #########################3
     decoder_config:
-      target: taming.models.refinement_ae.StyleAE
+      target: taming.models.refinement_ae.RefinementAE
       params:
-        # ckpt_path: logs/2023-07-08T03-40-46_decoder_final_finetune/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/decoder_beta_pt.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: image
-        restriction: true
+        restriction: false
         ddconfig:
           padding_free: false
           double_z: false
@@ -107,7 +107,7 @@ model:
     transformer_config:
       target: taming.models.maskgit.MaskGIT
       params:
-        ckpt_path: logs/2023-06-30T12-34-38_places_maskgit_1024/checkpoints/last.ckpt
+        ckpt_path: logs/2023-09-15T04-43-29_places_maskgit_ly40/checkpoints/last.ckpt
         cond_stage_key: segmentation
         sampling_ratio: 0.2
         attention_extent: mask
@@ -117,7 +117,7 @@ model:
           params:
             vocab_size: 1025
             block_size: 257  
-            n_layer: 24 # 24,40
+            n_layer: 40 # 24,40
             n_head: 16
             n_embd: 1408
             embd_pdrop: 0.0
@@ -127,12 +127,12 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 2
+    batch_size: 4
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /home/ICT2000/chenh/Haiwei/Datasets/Places365/val_large
-        maskroot: /home/ICT2000/chenh/Haiwei/Datasets/Places365/masks_val_512_eval
+        dataroot: /home/chenh/data/val_large
+        maskroot: /home/chenh/data/masks_val_512_eval
         crop_size: 256
         rescale: True
         rescale_size: 256

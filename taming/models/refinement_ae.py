@@ -388,53 +388,53 @@ class StyleAE(pl.LightningModule):
     #     dec = self.decode(quant_b)
     #     return dec
 
+
     def forward(self, batch, quant=None, mask_in=None, mask_out=None, return_fstg=True, debug=False):
 
         input_raw = self.get_input(batch, self.image_key)
-        input = input_raw * mask_in
 
         # first, get a composition of quantized reconstruction and the original image
         if mask_in is None:
-            mask = self.get_mask([input.shape[0], 1, input.shape[2], input.shape[3]], input.device)
-        else:
-            mask = mask_in
+            mask_in = self.get_mask([input_raw.shape[0], 1, input_raw.shape[2], input_raw.shape[3]], input_raw.device)
+        
+        input = input_raw * mask_in
 
         ##############################################
-        if self.first_stage_model_type == 'transformer':
-            x_raw, quant_fstg = self.first_stage_model.forward_to_recon(batch, 
-                                                                        mask=mask, 
-                                                                        det=False, 
-                                                                        return_quant=True)    
-        if self.first_stage_model_type == 'vae':
-            x_raw, _ = self.first_stage_model(input_raw)
-        
-        if return_fstg:
-            x_comp = mask * input_raw + (1 - mask) * x_raw
-        ############################################
+        if quant is None or return_fstg:
+            if self.first_stage_model_type == 'transformer':
+                x_raw, quant_fstg = self.first_stage_model.forward_to_recon(batch, 
+                                                                            mask=mask_in, 
+                                                                            det=False, 
+                                                                            return_quant=True)    
+            if self.first_stage_model_type == 'vae':
+                x_raw, _ = self.first_stage_model(input_raw)           
+            x_comp = mask_in * input_raw + (1 - mask_in) * x_raw
 
         if quant is None:
             if self.first_stage_model_type == 'vae':
                 quant, _, info = self.first_stage_model.encode(input_raw)
             else:
                 quant = quant_fstg
+        ##############################################
 
         # _, _, codes = info
         B, C, H, W = quant.shape
         
         # x_in = torch.cat([mask - 0.5, x_comp], dim=1)
 
+        h, ws, _ = self.encode(input, mask_in)
+
         if mask_out is None:
-            h, ws, mask_out = self.encode(input, mask)
-        else:
-            h, ws, _ = self.encode(input, mask)
+            mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/input.shape[-1]))
 
         # w1 = torch.sigmoid(self.att(h))       
         # h = mask_out * h + h * (1 - mask_out) * w1 + quant * (1 - mask_out) * (1 - w1)
         h = mask_out * h + quant * (1 - mask_out) * 0.5 + h * (1 - mask_out) * 0.5
 
         dec = self.decode(h, ws)
-
         dec = input + (1 - mask_in) * dec
+
+        mask = mask_in
 
         # Additional U-Net to refine output
         if self.use_refinement:
@@ -452,6 +452,10 @@ class StyleAE(pl.LightningModule):
                 return dec, mask, x_comp
             else:
                 return dec, mask
+
+    @torch.no_grad()
+    def generate(self, batch):
+        return self(batch, return_fstg=False)
 
     def get_input(self, batch, k):
         x = batch[k]

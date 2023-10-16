@@ -141,15 +141,28 @@ class InpaintingMaster(pl.LightningModule):
 
         x = self.get_input(self.image_key, batch)       
 
+        if mask is None:
+            if 'mask' in batch.keys():
+                mask = batch['mask'].permute(0,3,1,2).contiguous()
+            else:
+                # large-hole random mask following MAT
+                # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1])).to(x.device)
+                # small-hole random mask following MAT
+                mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
+
+        # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
+
         ###########################
         # quant_gt, _, info = VQModel.encode(x)
+        # dec, _ = self.current_model(batch, 
+        #                             quant=quant_gt, 
+        #                             mask_in=mask, 
+        #                             mask_out=None,
+        #                             return_fstg=False)
+        # dec = mask * x + (1 - mask) * dec
+        # return dec, mask
         # z_indices_gt = info[2].reshape(x.shape[0], -1)
         ###########################
-
-        if mask is None:
-            # large-hole random mask following MAT
-            # mask = box_mask(x.shape, x.device, 0.5, det=True).to(self.device).float()
-            mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1])).to(x.device)
 
         x_gt = x        
         x = mask * x
@@ -165,7 +178,7 @@ class InpaintingMaster(pl.LightningModule):
         z_indices = info[2].reshape(x.shape[0], -1)
 
         # inferring missing codes given the downsampled mask
-        z_indices_complete = Transformer.forward_to_indices(batch, z_indices, mask_out, temperature=0.5, det=False)
+        z_indices_complete = Transformer.forward_to_indices(batch, z_indices, mask_out, det=False)
 
         #########################
         # z_indices_complete = Transformer.forward_to_indices(batch, z_indices_ref, mask_out_ref)
@@ -246,9 +259,10 @@ class InpaintingMaster(pl.LightningModule):
         return self.current_model.configure_optimizers_with_lr(self.learning_rate)
 
     def get_mask(self, shape, device):
-        p = random.uniform(0.5, 0.5)
-        # mask = box_mask(shape, device, p, det=True)
-        mask = torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0,0.6])).to(device)
+
+        # small holes
+        mask = torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0,0.5])).to(device)
+
         return mask
 
     @torch.no_grad()
