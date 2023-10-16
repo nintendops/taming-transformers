@@ -1,12 +1,12 @@
 model:
   base_learning_rate: 4.5e-06
-  target: taming.models.refinement_ae.StyleAE
+  target: taming.models.refinement_ae.RefinementAE
   params:
-    ckpt_path: logs/2023-09-27T08-55-22_styleGAN_decoder_testrun/checkpoints/last.ckpt
+    ckpt_path: logs/2023-09-11T07-40-02_decoder_beta_r1/checkpoints/last.ckpt
     embed_dim: 256
     n_embed: 1024
     image_key: image
-    restriction: true
+    restriction: false
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
@@ -78,6 +78,6 @@ data:
       params:
         dataroot: /home/chenh/data/test_large
         crop_size: 256
-        rescale: True
+        rescale: true
         rescale_size: 256
         split: 'test'
