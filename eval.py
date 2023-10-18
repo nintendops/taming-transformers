@@ -143,7 +143,7 @@ if __name__ == '__main__':
         dataset = data.datasets['train']
 
     dataset_iter = iter(dataset)
-    length = min(200, len(dataset))
+    length = min(100, len(dataset))
     data_select = range(length) # range(len(dataset))
 
     if opt.mode == 'transformer':

@@ -1,6 +1,6 @@
 model:
   base_learning_rate: 4.5e-06
-  target: taming.models.refinement_ae.RefinementAE
+  target: taming.models.decoder.refinementAE.RefinementAE
   params:
     ckpt_path: logs/2023-09-11T07-40-02_decoder_beta_r1/checkpoints/last.ckpt
     embed_dim: 256

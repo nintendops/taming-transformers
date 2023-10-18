@@ -322,7 +322,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
             new_batch = dict(image=batch['image'][i:end_idx])
             if 'mask' in batch.keys():
                 masks = batch['mask'][i:end_idx]
-                masks[:,:,0,:] = 1
+                # masks[:,:,0,:] = 1
                 new_batch['mask'] = masks
 
             image_batch_gen = image_normalization(run_generator(G, new_batch))

@@ -259,10 +259,9 @@ class InpaintingMaster(pl.LightningModule):
         return self.current_model.configure_optimizers_with_lr(self.learning_rate)
 
     def get_mask(self, shape, device):
-
         # small holes
-        mask = torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0,0.5])).to(device)
-
+        # mask = torch.from_numpy(BatchRandomMask(shape[0], shape[-1], hole_range=[0,0.5])).to(device)
+        mask = box_mask(x.shape, x.device, 0.5, det=True).to(self.device).float()
         return mask
 
     @torch.no_grad()
@@ -298,8 +297,6 @@ class InpaintingMaster(pl.LightningModule):
 
             # composition
             rec = mask_in * x + (1 - mask_in) * rec
-
-            # rec_fstg = smoothed_mask * x + (1 - smoothed_mask) * rec_fstg
             log["inputs"] = x
             log["reconstructions"] = rec
             log["masked_input"] = x * mask_in
