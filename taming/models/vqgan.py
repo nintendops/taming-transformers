@@ -34,10 +34,14 @@ class VQModel(pl.LightningModule):
                  monitor=None,
                  remap=None,
                  sane_index_shape=False,  # tell vector quantizer to return indices as bhw
+                 decoder_model=None,
                  ):
         super().__init__()
         self.image_key = image_key
-        decoder_model = RestrictedDecoder if restriction else Decoder
+
+        if decoder_model is None:
+            decoder_model = Decoder
+
         self.encoder = Encoder(**ddconfig)
         self.decoder = decoder_model(**ddconfig)
         self.loss = instantiate_from_config(lossconfig)

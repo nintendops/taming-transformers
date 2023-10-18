@@ -70,7 +70,7 @@ model:
     decoder_config:
       target: taming.models.refinement_ae.RefinementAE
       params:
-        ckpt_path: logs/ckpts/decoder_beta_pt.ckpt
+        ckpt_path: logs/ckpts/beta_decoder_aug.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: image

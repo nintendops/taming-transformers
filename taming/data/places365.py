@@ -47,6 +47,7 @@ class Places(Dataset):
             self.cropper = albumentations.RandomCrop(height=self.crop_size, width=self.crop_size)
             self.hflipper = albumentations.HorizontalFlip(p=0.5)
         self.safety_rescaler = albumentations.SmallestMaxSize(max_size=self.crop_size)
+        
         if self.rescale:
             self.rescaler = albumentations.SmallestMaxSize(max_size=self.rescale_size)
             self.preprocessor = albumentations.Compose([self.rescaler, self.cropper, self.hflipper])
