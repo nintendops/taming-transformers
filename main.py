@@ -216,12 +216,12 @@ class SetupCallback(Callback):
             os.makedirs(self.cfgdir, exist_ok=True)
 
             print("Project config")
-            print(self.config.pretty())
+            print(OmegaConf.to_yaml(self.config))
             OmegaConf.save(self.config,
                            os.path.join(self.cfgdir, "{}-project.yaml".format(self.now)))
 
             print("Lightning config")
-            print(self.lightning_config.pretty())
+            print(OmegaConf.to_yaml(self.lightning_config))
             OmegaConf.save(OmegaConf.create({"lightning": self.lightning_config}),
                            os.path.join(self.cfgdir, "{}-lightning.yaml".format(self.now)))
 
