@@ -33,7 +33,6 @@ class MaskGIT(pl.LightningModule):
                  mask_on_latent=False,
                  downsample_cond_size=-1,
                  pkeep=0.5,
-                 sampling_ratio=0.2,
                  sos_token=0,
                  unconditional=False,
                  attention_extent='mask',
@@ -78,7 +77,6 @@ class MaskGIT(pl.LightningModule):
 
         # todo: remove hard-coded mapping
         self.mask_function = self.scatter_mask
-        self.sampling_ratio = sampling_ratio
 
     def init_from_ckpt(self, path, ignore_keys=list()):
         sd = torch.load(path, map_location="cpu")["state_dict"]
@@ -191,7 +189,6 @@ class MaskGIT(pl.LightningModule):
         assert mask is not None or self.pkeep < 1.0 
 
         if mask is None:
-            # mask = self.mask_function(z_indices)
             pkeep = self.mask_ratio_scheduler(x.shape[0])
             mask = self.mask_function(z_indices, p=pkeep)
         else:
@@ -466,10 +463,7 @@ class MaskGIT(pl.LightningModule):
         else:
             image_mask = mask_in
             mask = mask_out.reshape(mask_out.shape[0], -1).int()
-            _, z_indices_recon = self.encode_to_z(x)
-        
-        import ipdb; ipdb.set_trace()
-
+            _, z_indices_recon = self.encode_to_z(x)       
 
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      

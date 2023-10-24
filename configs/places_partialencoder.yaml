@@ -2,14 +2,14 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.refinement_ae.MaskPartialEncoderModel
   params:
-    ckpt_path: logs/2023-05-06T18-14-51_places256_partialencoder_1024/checkpoints/last.ckpt
+    ckpt_path: logs/ckpts/2023-05-26T15-25-34_places256_partialencoder_1024_cont.ckpt
     embed_dim: 256
     n_embed: 1024
     image_key: "image"
     first_stage_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/places256_vqgan1024_BASE/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/places256_vqgan1024_BASE.ckpt
         embed_dim: 256
         n_embed: 1024
         ddconfig:
@@ -53,20 +53,22 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 20
+    batch_size: 16
     train:
       target: taming.data.places365.Places
       params:
-        dataroot: /data/Haiwei/Datasets/Places365/data_large
+        dataroot: /home/chenh/data/data_large
         crop_size: 256
-        rescale: True
+        rescale: true
         rescale_size: 256
-        split: 'train'
+        split: train
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /data/Haiwei/Datasets/Places365/test_large
+        dataroot: /home/chenh/data/val_large
+        maskroot: /home/chenh/data/masks_val_512_eval
         crop_size: 256
-        rescale: True
+        rescale: true
         rescale_size: 256
         split: 'test'
+

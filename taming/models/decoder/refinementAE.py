@@ -29,8 +29,6 @@ def write_images(path, image, n_row=1):
             image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
     cv2.imwrite('{}'.format(str(path)), np.squeeze(image))
 
-
-
 class RefinementAE(pl.LightningModule):
     '''
         Refinement model for maskgit transformer:
@@ -84,9 +82,6 @@ class RefinementAE(pl.LightningModule):
 
         self.loss = instantiate_from_config(lossconfig)
         self.first_stage_model_type = first_stage_model_type
-
-        if ckpt_path is not None:
-            self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
         
         if first_stage_config is not None:
             self.init_first_stage_from_ckpt(first_stage_config, initialize_decoder=ckpt_path is None)
@@ -101,6 +96,9 @@ class RefinementAE(pl.LightningModule):
         self.mask_function = box_mask
         self.mask_lower = mask_lower
         self.mask_upper = mask_upper
+
+        if ckpt_path is not None:
+            self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
 
     def init_from_ckpt(self, path, ignore_keys=list()):
         sd = torch.load(path, map_location="cpu")["state_dict"]
@@ -148,18 +146,17 @@ class RefinementAE(pl.LightningModule):
         _, feat = self.decoder(quant, target_i_level = i)
         return feat
 
-    # def decode_code(self, code_b):
-    #     quant_b = self.quantize.embed_code(code_b)
-    #     dec = self.decode(quant_b)
-    #     return dec
+    @torch.no_grad()
+    def generate(self, batch, mask=None):
+        return self(batch, mask_in=mask, return_fstg=False)
 
-    def forward(self, batch, quant=None, mask_in=None, mask_out=None, return_fstg=True, debug=False):
+    def forward(self, batch, quant=None, mask_in=None, mask_out=None, return_fstg=True, use_noise=True, debug=False):
 
         input_raw = self.get_input(batch, self.image_key)
 
         # first, get a composition of quantized reconstruction and the original image
         if mask_in is None:
-            mask = self.get_mask([input.shape[0], 1, input.shape[2], input.shape[3]], input.device)
+            mask = self.get_mask([input_raw.shape[0], 1, input_raw.shape[2], input_raw.shape[3]], input_raw.device)
         else:
             mask = mask_in
 
@@ -170,7 +167,7 @@ class RefinementAE(pl.LightningModule):
             x_raw, quant_fstg = self.first_stage_model.forward_to_recon(batch, 
                                                                         mask=mask_out, 
                                                                         det=False, 
-                                                                        return_quant=True)    
+                                                                        return_quant=True)
         if self.first_stage_model_type == 'vae':
             x_raw, _ = self.first_stage_model(input_raw)
         
@@ -181,15 +178,18 @@ class RefinementAE(pl.LightningModule):
         if quant is None:
             if self.first_stage_model_type == 'vae':
                 quant_gt, _, info = self.first_stage_model.encode(input_raw)
-                B, C, H, W = quant_gt.shape
-                # randomly replace indices from gt info
-                gt_indices = info[2]
-                prob = 0.1
-                rand_indices = torch.rand(gt_indices.shape) * (self.n_embed - 1)
-                rand_indices = rand_indices.int().to(input.device)
-                rand_mask = (torch.rand(gt_indices.shape) < prob).int().to(input.device)
-                gt_indices = rand_mask * rand_indices + (1-rand_mask) * gt_indices
-                quant = self.first_stage_model.quantize.get_codebook_entry(gt_indices.reshape(-1).int(), shape=(B, H, W, C))
+                if use_noise:
+                    B, C, H, W = quant_gt.shape
+                    # randomly replace indices from gt info
+                    gt_indices = info[2]
+                    prob = 0.1
+                    rand_indices = torch.rand(gt_indices.shape) * (self.n_embed - 1)
+                    rand_indices = rand_indices.int().to(input.device)
+                    rand_mask = (torch.rand(gt_indices.shape) < prob).int().to(input.device)
+                    gt_indices = rand_mask * rand_indices + (1-rand_mask) * gt_indices
+                    quant = self.first_stage_model.quantize.get_codebook_entry(gt_indices.reshape(-1).int(), shape=(B, H, W, C))
+                else:
+                    quant = quant_gt
             else:
                 quant = quant_fstg
 
@@ -204,7 +204,7 @@ class RefinementAE(pl.LightningModule):
         h = mask_out * h + quant * (1 - mask_out) * 0.5 + h * (1 - mask_out) * 0.5
 
         dec = self.decode(h)
-        dec = input + (1 - mask_in) * dec
+        dec = input + (1 - mask) * dec
 
         # Additional U-Net to refine output
         if self.use_refinement:
@@ -362,12 +362,16 @@ class RefinementAE(pl.LightningModule):
         x = x.to(self.device)
 
         # We are always making assumption that the latent block is 16x16 here
-        mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
+        if 'mask' in batch.keys():
+            mask_in = batch['mask']
+        else:
+            mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
         mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/x.shape[-1]))
 
         if self.use_refinement:
             xrec, mask, xraw, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)
         else:
+            # xrec, mask, xrec_fstg = self(batch)
             xrec, mask, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)
         
         log["inputs"] = x

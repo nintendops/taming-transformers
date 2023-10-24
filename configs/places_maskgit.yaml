@@ -2,9 +2,8 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.maskgit.MaskGIT
   params:
-    ckpt_path: logs/2023-09-15T04-43-29_places_maskgit_ly40/checkpoints/last.ckpt
+    ckpt_path: logs/ckpts/maskgit_ly40.ckpt
     cond_stage_key: segmentation
-    sampling_ratio: 0.2
     attention_extent: mask
     mask_on_latent: true
     transformer_config:
@@ -61,7 +60,8 @@ data:
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /home/chenh/data/test_large
+        dataroot: /home/chenh/data/val_large
+        maskroot: /home/chenh/data/masks_val_512_eval
         crop_size: 256
         rescale: True
         rescale_size: 256

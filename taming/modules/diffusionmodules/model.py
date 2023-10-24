@@ -808,7 +808,7 @@ class MatEncoder(nn.Module):
         self.resolution = resolution
         self.in_channels = in_channels
 
-        self.conv_first = MAT.Conv2dLayerPartialRestrictive(clamp_ratio=0.5, in_channels=in_channels+1, out_channels=ch, kernel_size=3)       
+        self.conv_first = MAT.Conv2dLayerPartial(in_channels=in_channels+1, out_channels=ch, kernel_size=3, simple_conv=False)       
         self.enc_conv = nn.ModuleList()
         self.enc_conv_2 = nn.ModuleList()
         self.att_layer = 2
@@ -818,7 +818,7 @@ class MatEncoder(nn.Module):
             block_in = ch*in_ch_mult[i_level]
             block_out = ch*ch_mult[i_level]
             self.enc_conv.append(
-                MAT.Conv2dLayerPartial(in_channels=block_in, out_channels=block_out, kernel_size=3, down=2)
+                MAT.Conv2dLayerPartial(in_channels=block_in, out_channels=block_out, kernel_size=3, down=2, simple_conv=False)
             )
 
         # from 64 -> 16 -> 64
@@ -852,11 +852,11 @@ class MatEncoder(nn.Module):
             block_out = ch*ch_mult[self.att_layer + i_level]
             if i_level != self.num_resolutions - self.att_layer - 1:
                 self.enc_conv_2.append(
-                    MAT.Conv2dLayerPartial(in_channels=block_in, out_channels=block_out, kernel_size=3, down=2)
+                    MAT.Conv2dLayerPartial(in_channels=block_in, out_channels=block_out, kernel_size=3, down=2, simple_conv=False)
                 )
             else:
                 self.enc_conv_2.append(
-                    MAT.Conv2dLayerPartial(in_channels=block_in, out_channels=block_out, kernel_size=3)
+                    MAT.Conv2dLayerPartial(in_channels=block_in, out_channels=block_out, kernel_size=3, simple_conv=False)
                 )
 
 

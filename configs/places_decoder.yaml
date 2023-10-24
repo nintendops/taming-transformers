@@ -2,7 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.decoder.refinementAE.RefinementAE
   params:
-    ckpt_path: logs/2023-09-11T07-40-02_decoder_beta_r1/checkpoints/last.ckpt
+    ckpt_path: logs/2023-10-12T23-14-25_beta_decoder_aug/checkpoints/last.ckpt
     embed_dim: 256
     n_embed: 1024
     image_key: image
@@ -76,7 +76,8 @@ data:
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /home/chenh/data/test_large
+        dataroot: /home/chenh/data/val_large
+        maskroot: /home/chenh/data/masks_val_512_eval
         crop_size: 256
         rescale: true
         rescale_size: 256
