@@ -467,10 +467,7 @@ class MaskGIT(pl.LightningModule):
             image_mask = mask_in
             mask = mask_out.reshape(mask_out.shape[0], -1).int()
             _, z_indices_recon = self.encode_to_z(x)
-        
-        import ipdb; ipdb.set_trace()
-
-
+       
         r_indices = torch.full_like(z_indices, self.mask_token)
         z_start_indices = mask*z_indices+(1-mask)*r_indices      
 
