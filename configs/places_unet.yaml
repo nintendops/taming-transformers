@@ -2,7 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.decoder.unet.RefinementUNet
   params:
-    # ckpt_path: logs/2023-09-07T07-15-58_decoder_beta/checkpoints/last.ckpt
+    ckpt_path: logs/2023-10-21T02-48-27_places_beta_unet/checkpoints/last.ckpt
     embed_dim: 256
     n_embed: 1024
     image_key: image
@@ -26,60 +26,40 @@ model:
       dropout: 0.0
     first_stage_model_type: 'decoder'
     first_stage_config:
-      target: taming.models.refinement_ae.StyleAE
+      target: taming.models.decoder.refinementAE.RefinementAE
       params:
-        ckpt_path: logs/ckpts/styleGAN_decoder_lm.ckpt
+        ckpt_path: logs/2023-10-12T23-14-25_beta_decoder_aug/checkpoints/last.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: image
-        restriction: true
-        first_stage_model_type: 'transformer'
+        restriction: false
+        first_stage_model_type: 'vae'
         first_stage_config:
-          target: taming.models.maskgit.MaskGIT
+          target: taming.models.vqgan.VQModel
           params:
-            ckpt_path: logs/2023-09-15T04-43-29_places_maskgit_ly40/checkpoints/last.ckpt
-            cond_stage_key: segmentation
-            sampling_ratio: 0.2
-            attention_extent: mask
-            mask_on_latent: true
-            transformer_config:
-              target: taming.modules.transformer.mingpt.GPT
-              params:
-                vocab_size: 1025
-                block_size: 257  # 257
-                n_layer: 40 # 24,40
-                n_head: 16
-                n_embd: 1408
-                embd_pdrop: 0.0
-                resid_pdrop: 0.0
-                attn_pdrop: 0.0
-            first_stage_config:
-              target: taming.models.vqgan.VQModel
-              params:
-                ckpt_path: logs/ckpts/places256_vqgan1024_BASE.ckpt
-                embed_dim: 256
-                n_embed: 1024
-                ddconfig:
-                  padding_free: false
-                  double_z: false
-                  z_channels: 256
-                  resolution: 256
-                  in_channels: 3
-                  out_ch: 3
-                  ch: 128
-                  ch_mult:
-                  - 1
-                  - 1
-                  - 2
-                  - 2
-                  - 4
-                  num_res_blocks: 2
-                  attn_resolutions:
-                  - 16
-                  dropout: 0.0
-                lossconfig:
-                  target: taming.modules.losses.DummyLoss             
-            cond_stage_config: "__is_unconditional__"   
+            ckpt_path: logs/ckpts/places256_vqgan1024_BASE.ckpt
+            embed_dim: 256
+            n_embed: 1024
+            ddconfig:
+              padding_free: false
+              double_z: false
+              z_channels: 256
+              resolution: 256
+              in_channels: 3
+              out_ch: 3
+              ch: 128
+              ch_mult:
+              - 1
+              - 1
+              - 2
+              - 2
+              - 4
+              num_res_blocks: 2
+              attn_resolutions:
+              - 16
+              dropout: 0.0
+            lossconfig:
+              target: taming.modules.losses.DummyLoss
         ddconfig:
           padding_free: false
           double_z: false
@@ -103,7 +83,7 @@ model:
     lossconfig:
       target: taming.modules.losses.vqperceptual.PIPSWithDiscriminator
       params:
-        pixelloss_weight: 0.0
+        pixelloss_weight: 0.1
         perceptual_weight: 0.1
         r1_weight: 1.0
         disc_conditional: false
@@ -125,8 +105,9 @@ data:
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /home/chenh/data/test_large
+        dataroot: /home/chenh/data/val_large
+        maskroot: /home/chenh/data/masks_val_512_eval
         crop_size: 256
         rescale: True
         rescale_size: 256
-        split: 'test'
+        split: 'test' 

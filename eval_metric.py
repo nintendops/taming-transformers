@@ -126,7 +126,7 @@ if __name__ == '__main__':
     def generate_results(G, batch):
         # mask = batch['mask']
         with torch.no_grad():
-            rec = G(batch, recomposition=True)[0]
+            rec = G(batch, use_unet=False, recomposition=True)[0]
         return rec
 
     kwargs = dict(G=model, dataset=dataset, G_callback=generate_results, device=device, num_gpus=opt.num_gpus)

@@ -10,7 +10,7 @@ model:
     vqmodel_config:
       target: taming.models.vqgan.VQModel
       params:
-        ckpt_path: logs/places256_vqgan1024_BASE/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/places256_vqgan1024_BASE.ckpt
         embed_dim: 256
         n_embed: 1024
         ddconfig:
@@ -43,11 +43,12 @@ model:
     encoder_config:
       target: taming.models.refinement_ae.MaskPartialEncoderModel
       params:
-        ckpt_path: logs/2023-05-26T15-25-34_places256_partialencoder_1024_cont/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/2023-05-26T15-25-34_places256_partialencoder_1024_cont.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: "image"
         ddconfig:
+          clamp_ratio: 0.25
           padding_free: false
           double_z: false
           z_channels: 256
@@ -67,13 +68,13 @@ model:
           dropout: 0.0
     ################## Decoder configuration #########################3
     decoder_config:
-      target: taming.models.refinement_ae.RefinementAE
+      target: taming.models.refinement_ae.StyleAE
       params:
-        ckpt_path: logs/2023-06-04T12-39-32_decoder_perceptual_gitfinetune_safe//checkpoints/last.ckpt
+        ckpt_path: logs/2023-10-05T19-44-28_styleGAN_decoder_large_mask/checkpoints/last.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: image
-        restriction: false
+        restriction: true
         ddconfig:
           padding_free: false
           double_z: false
@@ -95,20 +96,45 @@ model:
         lossconfig:
           target: taming.modules.losses.vqperceptual.PIPSWithDiscriminator
           params:
-            pixelloss_weight: 0.0
-            perceptual_weight: 0.1
+            pixelloss_weight: 1.0
+            perceptual_weight: 1.0
             r1_weight: 0.0
             disc_conditional: false
             disc_in_channels: 4
             disc_start: 1
-            disc_weight: 1.0
-    ################## Transformer configuration #########################3
+            disc_weight: 0.8
+    ################## UNet Refinement configuration #####################
+    unet_config:
+      target: taming.models.decoder.unet.RefinementUNet
+      params:
+        ckpt_path: logs/2023-10-21T02-48-27_places_beta_unet/checkpoints/last.ckpt
+        embed_dim: 256
+        n_embed: 1024
+        image_key: image
+        ddconfig:
+          padding_free: false
+          double_z: false
+          z_channels: 256
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 1
+          - 2
+          - 2
+          - 4
+          num_res_blocks: 2
+          attn_resolutions:
+          - 16
+          dropout: 0.0
+    ################## Transformer configuration #########################
     transformer_config:
       target: taming.models.maskgit.MaskGIT
       params:
-        ckpt_path: /data/Haiwei/taming_ckpts/2023-05-18T07-39-35_places256_maskgit_1024_cont/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/maskgit_ly40.ckpt
         cond_stage_key: segmentation
-        sampling_ratio: 0.2
         attention_extent: mask
         mask_on_latent: false
         transformer_config:
@@ -116,7 +142,7 @@ model:
           params:
             vocab_size: 1025
             block_size: 257  
-            n_layer: 24 # 24,40
+            n_layer: 40 # 24,40
             n_head: 16
             n_embd: 1408
             embd_pdrop: 0.0
@@ -126,19 +152,12 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 2
-    train:
-      target: taming.data.places365.Places
-      params:
-        dataroot: /data/Haiwei/Datasets/Places365/data_large
-        crop_size: 256
-        rescale: true
-        rescale_size: 256
-        split: train
+    batch_size: 4
     test:
       target: taming.data.places365.Places
       params:
-        dataroot: /data/Haiwei/Datasets/Places365/test_large
+        dataroot: /home/chenh/data/val_large
+        maskroot: /home/chenh/data/masks_val_512_eval
         crop_size: 256
         rescale: True
         rescale_size: 256

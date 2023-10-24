@@ -38,6 +38,7 @@ class InpaintingMaster(pl.LightningModule):
                  encoder_config=None,
                  decoder_config=None,
                  transformer_config=None,
+                 unet_config=None,
                  encoder_choice='refined',
                  image_key="image",
                  ckpt_path=None,
@@ -53,6 +54,7 @@ class InpaintingMaster(pl.LightningModule):
         Encoder = None
         Decoder = None
         Transformer = None
+        Unet = None
         self.current_model = None
         self.helper_model = None
 
@@ -62,6 +64,7 @@ class InpaintingMaster(pl.LightningModule):
         # We always need a vq model in every stage
         # Initialize the VQ model
         VQModel = instantiate_from_config(vqmodel_config)
+        # VQModel = VQModel.to(self.device)
         if stage != 'vq':
             make_eval(VQModel)
 
@@ -70,6 +73,7 @@ class InpaintingMaster(pl.LightningModule):
             assert encoder_config is not None
             Encoder = instantiate_from_config(encoder_config)
             Encoder.set_first_stage_model(VQModel)
+            # Encoder = Encoder.to(self.device)
 
         if self.stage != 'encoder':
             if encoder_choice == 'vq':
@@ -81,10 +85,16 @@ class InpaintingMaster(pl.LightningModule):
             assert decoder_config is not None
             Decoder = instantiate_from_config(decoder_config)
             Decoder.set_first_stage_model(Encoder)
+            # Decoder = Decoder.to(self.device)
         if self.stage == 'maskgit' or self.stage == 'final':
             assert transformer_config is not None
             Transformer = instantiate_from_config(transformer_config)
             Transformer.set_first_stage_model(Encoder)
+            # Transformer = Transformer.to(self.device)
+
+        if self.stage == 'final' and unet_config is not None:
+            Unet = instantiate_from_config(unet_config)           
+            # Unet = Unet.to(self.device)
 
         # Finally, set the current training model
         if self.stage == 'vq':
@@ -102,11 +112,13 @@ class InpaintingMaster(pl.LightningModule):
         else:
             ignore_keys = ["VQModel", "Encoder", "Transformer"]
             make_eval(Transformer)
-            self.helper_model = (VQModel, Encoder, Transformer)    
+            self.helper_model = (VQModel, Encoder, Transformer, Unet)    
             self.current_model = Decoder
 
         if ckpt_path is not None:            
             self.init_from_ckpt(ckpt_path, ignore_keys)
+
+        self.set_device = False
 
     def init_from_ckpt(self, path, ignore_keys=list()):
         sd = torch.load(path, map_location="cpu")["state_dict"]
@@ -129,14 +141,15 @@ class InpaintingMaster(pl.LightningModule):
             x = x.float()
         return x
 
-    def forward(self, batch, mask=None, use_vq_decoder=False, simple_return=True, recomposition=False):
+    def forward(self, batch, mask=None, use_vq_decoder=False, simple_return=True, recomposition=False, use_unet=False):
         '''
             forward with the complete model
         '''
-        VQModel, Encoder, Transformer = self.helper_model
+        VQModel, Encoder, Transformer, Unet = self.helper_model
         VQModel = VQModel.to(self.device)
         Encoder = Encoder.to(self.device)
         Transformer = Transformer.to(self.device)
+
         self.current_model = self.current_model.to(self.device)
 
         x = self.get_input(self.image_key, batch)       
@@ -146,9 +159,9 @@ class InpaintingMaster(pl.LightningModule):
                 mask = batch['mask'].permute(0,3,1,2).contiguous()
             else:
                 # large-hole random mask following MAT
-                # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1])).to(x.device)
+                mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1])).to(x.device)
                 # small-hole random mask following MAT
-                mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
+                # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
 
         # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
 
@@ -177,6 +190,13 @@ class InpaintingMaster(pl.LightningModule):
         mask_out = mask_out.reshape(x.shape[0], -1)
         z_indices = info[2].reshape(x.shape[0], -1)
 
+
+        ## PERFECT ENCODER #########################
+        # quant_gt, _, info_gt = VQModel.encode(x_gt)
+        # z_indices_gt = info_gt[2].reshape(x.shape[0], -1)
+        # z_indices = z_indices_gt.int() * mask_out.int()
+        ############################################
+
         # inferring missing codes given the downsampled mask
         z_indices_complete = Transformer.forward_to_indices(batch, z_indices, mask_out, det=False)
 
@@ -204,6 +224,10 @@ class InpaintingMaster(pl.LightningModule):
         if recomposition:
             # linear blending
             dec = mask * x + (1 - mask) * dec
+
+        if Unet is not None and use_unet:
+            Unet = Unet.to(self.device)
+            dec = Unet.refine(dec, mask)
 
         if simple_return:
             return dec, mask
@@ -270,7 +294,7 @@ class InpaintingMaster(pl.LightningModule):
             return self.current_model.log_images(batch, **kwargs)
         else:
             log = dict()
-            VQModel, _, _ = self.helper_model
+            VQModel, _, _, Unet = self.helper_model
             VQModel = VQModel.to(self.device)
             x = self.get_input(self.image_key, batch)
             x = x.to(self.device)
@@ -286,21 +310,22 @@ class InpaintingMaster(pl.LightningModule):
             # mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/x.shape[-1]))
             # xrec, mask, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)            
 
-            rec, _, _, quant_z, _, mask_out = self(batch, recomposition=False, mask=mask_in, simple_return=False)
+            rst = self(batch, recomposition=False, mask=mask_in, use_unet=False, simple_return=False)
+            rec = rst[0]
+            quant_z = rst[3]
             rec_fstg = VQModel.decode(quant_z)
-
-            # linear blending
-            # k = 3
-            # kernel = torch.ones(1,1,k,k) / k**2
-            # pad = k // 2
-            # smoothed_mask = F.conv2d(F.pad(mask_in,(pad,pad,pad,pad),value=1), kernel.to(mask_in.device), bias=None, padding=0)
-
             # composition
             rec = mask_in * x + (1 - mask_in) * rec
-            log["inputs"] = x
+
+            if Unet is not None:
+                Unet = Unet.to(self.device)
+                rec_unet = Unet.refine(rec, mask_in)
+                log['recon_unet'] = rec_unet
+
+            # log["inputs"] = x
             log["reconstructions"] = rec
             log["masked_input"] = x * mask_in
-            log['recon_fstg'] = rec_fstg
+            # log['recon_fstg'] = rec_fstg
             return log
 
 
