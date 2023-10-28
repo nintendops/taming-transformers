@@ -62,7 +62,7 @@ class RefinementUNet(pl.LightningModule):
                  monitor=None,
                  remap=None,
                  sane_index_shape=False,  # tell vector quantizer to return indices as bhw
-                 second_stage_refinement=False,
+                 freeze_firststage=False,
                  ):
         super().__init__()
         self.image_key = image_key
@@ -71,6 +71,7 @@ class RefinementUNet(pl.LightningModule):
         self.decoder = Decoder(**ddconfig)
         self.bottleneck_conv = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)
         self.post_bottleneck_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
+        self.freeze_firststage = freeze_firststage
 
         if lossconfig is not None:
             self.loss = instantiate_from_config(lossconfig)
@@ -79,12 +80,17 @@ class RefinementUNet(pl.LightningModule):
 
         self.first_stage_model_type = first_stage_model_type
 
-        if ckpt_path is not None:
+        if ckpt_path is not None and self.freeze_firststage:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
         
-        if first_stage_config is not None:
+        if first_stage_config is not None and self.freeze_firststage:
             # initialize the U-Net with vq-vae if not resumed from a checkpoint
             self.init_first_stage_from_ckpt(first_stage_config, initialize_current=ckpt_path is None)
+
+        if ckpt_path is not None and not self.freeze_firststage:
+            self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
+            self.first_stage_model = instantiate_from_config(first_stage_config)
+            self.loss_fstg = self.first_stage_model.loss
 
         self.image_key = image_key
 
@@ -114,6 +120,7 @@ class RefinementUNet(pl.LightningModule):
         model = instantiate_from_config(config)
         model = model.eval()
         model.train = disabled_train
+
         self.first_stage_model = model
 
         if self.first_stage_model_type == 'vae':
@@ -179,7 +186,12 @@ class RefinementUNet(pl.LightningModule):
             x_raw, _ = self.first_stage_model(input_raw)
             x_comp = input + (1 - mask) * x_raw
         elif self.first_stage_model_type == 'decoder':
-            x_raw, mask = self.first_stage_model.generate(batch)
+
+            if self.freeze_firststage:
+                x_raw, mask = self.first_stage_model.generate(batch)
+            else:
+                x_raw, mask = self.first_stage_model(batch, return_fstg=False)
+
             input = input_raw * mask
             x_comp = x_raw
         else:
@@ -199,7 +211,8 @@ class RefinementUNet(pl.LightningModule):
         return x.float().to(self.device)
 
     def get_mask(self, shape, device):
-        return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
+        return box_mask(shape, device, 0.8, det=True)
+        # return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
         
     def get_mask_eval(self, shape, device):
         return box_mask(shape, device, 0.5, det=True)
@@ -209,13 +222,17 @@ class RefinementUNet(pl.LightningModule):
         x = self.get_input(batch, self.image_key)
         mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
         # mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/x.shape[-1]))
-        xrec, mask, _ = self(batch, mask_in=mask_in, mask_out=None)
-        xfstg = None
+        xrec, mask, x_fstg = self(batch, mask_in=mask_in, mask_out=None)
 
         if optimizer_idx == 0:
             # autoencode
             aeloss, log_dict_ae = self.loss(x, xrec, optimizer_idx, self.global_step,
                                             mask=mask, last_layer=self.get_last_layer(), split="train")
+
+            if not self.freeze_firststage:
+                aeloss_fstg, log_dict_ae_fstg = self.loss_fstg(x, x_fstg, optimizer_idx, self.global_step,
+                                                               mask=mask, last_layer=self.first_stage_model.get_last_layer(), split="train")
+                aeloss = aeloss + aeloss_fstg
 
             self.log("train/aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=True)
@@ -225,6 +242,11 @@ class RefinementUNet(pl.LightningModule):
             # discriminator
             discloss, log_dict_disc = self.loss(x, xrec, optimizer_idx, self.global_step,
                                                 mask=mask, last_layer=self.get_last_layer(), split="train")
+            if not self.freeze_firststage:
+                discloss_fstg, log_dict_disc_fstg = self.loss_fstg(x, x_fstg, optimizer_idx, self.global_step,
+                                                                   mask=mask, last_layer=self.first_stage_model.get_last_layer(), split="train")
+                discloss = discloss + discloss_fstg
+
             self.log("train/discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=True)
             return discloss

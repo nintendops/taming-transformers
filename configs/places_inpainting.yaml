@@ -43,7 +43,7 @@ model:
     encoder_config:
       target: taming.models.refinement_ae.MaskPartialEncoderModel
       params:
-        ckpt_path: logs/ckpts/2023-05-26T15-25-34_places256_partialencoder_1024_cont.ckpt
+        ckpt_path: logs/2023-10-22T03-37-41_partialencoder_cont/checkpoints/last.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: "image"

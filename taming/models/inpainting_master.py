@@ -163,7 +163,7 @@ class InpaintingMaster(pl.LightningModule):
                 # small-hole random mask following MAT
                 # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
 
-        # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
+        mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.6])).to(x.device)
 
         ###########################
         # quant_gt, _, info = VQModel.encode(x)

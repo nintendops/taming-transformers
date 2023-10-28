@@ -231,12 +231,12 @@ class RefinementAE(pl.LightningModule):
         return x.float().to(self.device)
 
     def get_mask(self, shape, device):
-    	# large random mask
-    	return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
-		# return box_mask(shape, device, 0.5, det=True)
+        # large random mask
+        # return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
+        return box_mask(shape, device, 0.8, det=True)
         
     def get_mask_eval(self, shape, device):
-        return box_mask(shape, device, 0.5, det=True)
+        return box_mask(shape, device, 0.8, det=True)
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         # We are always making assumption that the latent block is 16x16 here
