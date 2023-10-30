@@ -1,0 +1,72 @@
+model:
+  base_learning_rate: 4.5e-06
+  target: taming.models.refinement_ae.MaskPartialEncoderModel
+  params:
+    # ckpt_path: logs/ckpts/2023-05-26T15-25-34_places256_partialencoder_1024_cont.ckpt
+    embed_dim: 256
+    n_embed: 1024
+    image_key: "image"
+    first_stage_config:
+      target: taming.models.vqgan.VQModel
+      params:
+        ckpt_path: logs/2023-10-16T05-50-29_celebA_vqgan/checkpoints/last.ckpt
+        embed_dim: 256
+        n_embed: 1024
+        ddconfig:
+          padding_free: false
+          double_z: false
+          z_channels: 256
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 1
+          - 2
+          - 2
+          - 4
+          num_res_blocks: 2
+          attn_resolutions:
+          - 16
+          dropout: 0.0
+        lossconfig:
+          target: taming.modules.losses.DummyLoss
+    ddconfig:
+      padding_free: false
+      double_z: false
+      z_channels: 256
+      resolution: 256
+      in_channels: 3
+      out_ch: 3
+      ch: 128
+      ch_mult:
+      - 1
+      - 1
+      - 2
+      - 2
+      - 4
+      num_res_blocks: 2
+      attn_resolutions:
+      - 16
+      dropout: 0.0
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 16
+    train:
+      target: taming.data.places365.Places
+      params:
+        dataroot: /home/chenh/data/celeba_hq/train
+        crop_size: 256
+        rescale: True
+        rescale_size: 256
+        split: 'train'
+    test:
+      target: taming.data.places365.Places
+      params:
+        dataroot: /home/chenh/data/celeba_hq/val
+        crop_size: 256
+        rescale: True
+        rescale_size: 256
+        split: 'test'
