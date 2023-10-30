@@ -6,6 +6,7 @@ model:
     embed_dim: 256
     n_embed: 1024
     image_key: image
+    freeze_firststage: false
     ddconfig:
       padding_free: false
       double_z: false

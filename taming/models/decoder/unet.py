@@ -62,7 +62,7 @@ class RefinementUNet(pl.LightningModule):
                  monitor=None,
                  remap=None,
                  sane_index_shape=False,  # tell vector quantizer to return indices as bhw
-                 freeze_firststage=False,
+                 freeze_firststage=True,
                  ):
         super().__init__()
         self.image_key = image_key
@@ -87,9 +87,9 @@ class RefinementUNet(pl.LightningModule):
             # initialize the U-Net with vq-vae if not resumed from a checkpoint
             self.init_first_stage_from_ckpt(first_stage_config, initialize_current=ckpt_path is None)
 
-        if ckpt_path is not None and not self.freeze_firststage:
-            self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
+        if first_stage_config is not None and ckpt_path is not None and not self.freeze_firststage:
             self.first_stage_model = instantiate_from_config(first_stage_config)
+            self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
             self.loss_fstg = self.first_stage_model.loss
 
         self.image_key = image_key

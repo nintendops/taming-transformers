@@ -42,6 +42,7 @@ class InpaintingMaster(pl.LightningModule):
                  encoder_choice='refined',
                  image_key="image",
                  ckpt_path=None,
+
                  ):
         super().__init__()
 
@@ -55,6 +56,7 @@ class InpaintingMaster(pl.LightningModule):
         Decoder = None
         Transformer = None
         Unet = None
+        use_unet_decoder = False
         self.current_model = None
         self.helper_model = None
 
@@ -81,20 +83,30 @@ class InpaintingMaster(pl.LightningModule):
             else:
                 make_eval(Encoder)
 
-        if self.stage == 'decoder' or self.stage == 'final':
+        if self.stage == 'final' and unet_config is not None:
+            use_unet_decoder = not unet_config.params.freeze_firststage
+            # overriding first stage config for unet instantiation
+            if use_unet_decoder:
+                unet_config.params.first_stage_model_type = 'decoder'
+                unet_config.params.first_stage_config = decoder_config
+                assert decoder_config is not None
+            Unet = instantiate_from_config(unet_config)           
+   
+        if use_unet_decoder:
+            Decoder = Unet.first_stage_model
+            Decoder.set_first_stage_model(Encoder)
+        elif self.stage == 'decoder' or self.stage == 'final':
             assert decoder_config is not None
             Decoder = instantiate_from_config(decoder_config)
             Decoder.set_first_stage_model(Encoder)
             # Decoder = Decoder.to(self.device)
+
         if self.stage == 'maskgit' or self.stage == 'final':
             assert transformer_config is not None
             Transformer = instantiate_from_config(transformer_config)
             Transformer.set_first_stage_model(Encoder)
             # Transformer = Transformer.to(self.device)
 
-        if self.stage == 'final' and unet_config is not None:
-            Unet = instantiate_from_config(unet_config)           
-            # Unet = Unet.to(self.device)
 
         # Finally, set the current training model
         if self.stage == 'vq':
@@ -163,7 +175,8 @@ class InpaintingMaster(pl.LightningModule):
                 # small-hole random mask following MAT
                 # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
 
-        mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.6])).to(x.device)
+        # mask override
+        mask = box_mask(x.shape, x.device, 0.8, det=True)
 
         ###########################
         # quant_gt, _, info = VQModel.encode(x)
@@ -296,24 +309,15 @@ class InpaintingMaster(pl.LightningModule):
             log = dict()
             VQModel, _, _, Unet = self.helper_model
             VQModel = VQModel.to(self.device)
+
             x = self.get_input(self.image_key, batch)
             x = x.to(self.device)
-
-            if 'mask' in batch.keys() and mask_in is None:
-                mask_in = batch['mask'].to(self.device)
-
-            # We are always making assumption that the latent block is 16x16 here
-            if mask_in is None:
-                mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
-
-            # mask_in = box_mask(x.shape, x.device, 0.15, det=True).to(self.device).float()
-            # mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/x.shape[-1]))
-            # xrec, mask, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)            
-
-            rst = self(batch, recomposition=False, mask=mask_in, use_unet=False, simple_return=False)
+            rst = self(batch, recomposition=False, mask=None, use_unet=False, simple_return=False)
             rec = rst[0]
             quant_z = rst[3]
+            mask_in = rst[-2]
             rec_fstg = VQModel.decode(quant_z)
+
             # composition
             rec = mask_in * x + (1 - mask_in) * rec
 
