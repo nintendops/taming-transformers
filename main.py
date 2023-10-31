@@ -236,7 +236,7 @@ class SetupCallback(Callback):
                 except FileNotFoundError:
                     pass
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-            if trainer.global_rank == 0 and batch_idx > 0 and batch_idx % 2000 == 0:
+            if trainer.global_rank == 0 and batch_idx > 0 and batch_idx % 500 == 0:
                 print(f"Summoning checkpoint at idx {batch_idx}.")
                 ckpt_path = os.path.join(self.ckptdir, "last.ckpt")
                 trainer.save_checkpoint(ckpt_path)

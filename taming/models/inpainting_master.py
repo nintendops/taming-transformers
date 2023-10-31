@@ -168,7 +168,9 @@ class InpaintingMaster(pl.LightningModule):
 
         if mask is None:
             if 'mask' in batch.keys():
-                mask = batch['mask'].permute(0,3,1,2).contiguous()
+                mask = batch['mask']
+                if mask.shape[-1] == 1:
+                    mask = mask.permute(0,3,1,2).contiguous()
             else:
                 # large-hole random mask following MAT
                 mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1])).to(x.device)
@@ -176,7 +178,7 @@ class InpaintingMaster(pl.LightningModule):
                 # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
 
         # mask override
-        mask = box_mask(x.shape, x.device, 0.8, det=True)
+        # mask = box_mask(x.shape, x.device, 0.8, det=True)
 
         ###########################
         # quant_gt, _, info = VQModel.encode(x)

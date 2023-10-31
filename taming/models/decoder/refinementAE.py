@@ -73,13 +73,6 @@ class RefinementAE(pl.LightningModule):
         self.bottleneck_conv = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)
         self.post_bottleneck_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
 
-        # Second Stage
-        if self.use_refinement:
-            self.encoder_2 = MaskEncoder(**ddconfig)
-            self.decoder_2 = Decoder(**ddconfig)
-            self.bottleneck_conv_2 = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)
-            self.post_bottleneck_conv_2 = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
-
         self.loss = instantiate_from_config(lossconfig)
         self.first_stage_model_type = first_stage_model_type
         
@@ -206,22 +199,12 @@ class RefinementAE(pl.LightningModule):
         dec = self.decode(h)
         dec = input + (1 - mask) * dec
 
-        # Additional U-Net to refine output
-        if self.use_refinement:
-            x_fstg = dec
-            dec = self.second_stage(dec, mask)
-            dec = mask * input + (1 - mask) * dec
-            if return_fstg:
-                return dec, mask, x_comp, x_fstg
-            else:
-                return dec, mask
+        if debug:
+            return dec, mask, mask_out, quant * (1 - mask_out), h * (1 - mask_out)
+        elif return_fstg:                
+            return dec, mask, x_comp
         else:
-            if debug:
-                return dec, mask, mask_out, quant * (1 - mask_out), h * (1 - mask_out)
-            elif return_fstg:                
-                return dec, mask, x_comp
-            else:
-                return dec, mask
+            return dec, mask
 
     def get_input(self, batch, k):
         x = batch[k]
@@ -232,8 +215,8 @@ class RefinementAE(pl.LightningModule):
 
     def get_mask(self, shape, device):
         # large random mask
-        # return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
-        return box_mask(shape, device, 0.8, det=True)
+        return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
+        # return box_mask(shape, device, 0.8, det=True)
         
     def get_mask_eval(self, shape, device):
         return box_mask(shape, device, 0.8, det=True)
@@ -243,22 +226,13 @@ class RefinementAE(pl.LightningModule):
         x = self.get_input(batch, self.image_key)
         mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
         mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/x.shape[-1]))
-
-        if self.use_refinement:
-            xrec, mask, _, xfstg = self(batch, mask_in=mask_in, mask_out=mask_out)
-        else:
-            xrec, mask, _ = self(batch, mask_in=mask_in, mask_out=mask_out)
-            xfstg = None
+        xrec, mask, _ = self(batch, mask_in=mask_in, mask_out=mask_out)
+        xfstg = None
 
         if optimizer_idx == 0:
             # autoencode
-
-            if self.use_refinement:
-                aeloss, log_dict_ae = self.loss(x, xrec, optimizer_idx, self.global_step, reconstructions_fstg=xfstg,
-                                                mask=mask, last_layer=self.get_last_layer(), split="train")
-            else:
-                aeloss, log_dict_ae = self.loss(x, xrec, optimizer_idx, self.global_step,
-                                                mask=mask, last_layer=self.get_last_layer(), split="train")
+            aeloss, log_dict_ae = self.loss(x, xrec, optimizer_idx, self.global_step,
+                                            mask=mask, last_layer=self.get_last_layer(), split="train")
 
             self.log("train/aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=True)
@@ -266,12 +240,8 @@ class RefinementAE(pl.LightningModule):
 
         if optimizer_idx == 1:
             # discriminator
-            if self.use_refinement:
-                discloss, log_dict_disc = self.loss(x, xrec, optimizer_idx, self.global_step, reconstructions_fstg=xfstg,
-                                                    mask=mask, last_layer=self.get_last_layer(), split="train")
-            else:
-                discloss, log_dict_disc = self.loss(x, xrec, optimizer_idx, self.global_step,
-                                                    mask=mask, last_layer=self.get_last_layer(), split="train")
+            discloss, log_dict_disc = self.loss(x, xrec, optimizer_idx, self.global_step,
+                                                mask=mask, last_layer=self.get_last_layer(), split="train")
             self.log("train/discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=True)
             return discloss
@@ -326,34 +296,24 @@ class RefinementAE(pl.LightningModule):
                  list(self.bottleneck_conv.parameters()) + 
                  list(self.post_bottleneck_conv.parameters()))
 
-        if self.use_refinement:
-            params = list(params + 
-                     list(self.encoder_2.parameters()) + 
-                     list(self.decoder_2.parameters()) + 
-                     list(self.bottleneck_conv_2.parameters()) + 
-                     list(self.post_bottleneck_conv_2.parameters()))
-
         opt_ae = torch.optim.Adam(params, lr=lr, betas=(0.5, 0.9))
-
-        if self.use_refinement:
-            opt_disc = torch.optim.Adam(list(self.loss.discriminator.parameters()) + 
-                                        list(self.loss.discriminator_2.parameters()),
-                                        lr=lr, betas=(0.5, 0.9))
-        else:
-            opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(),
+        opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(),
                                         lr=lr, betas=(0.5, 0.9))
         return [opt_ae, opt_disc], []
 
+    def get_params(self):
+        params = list(list(self.encoder.parameters()) + 
+                 list(self.decoder.parameters()) + 
+                 list(self.bottleneck_conv.parameters()) + 
+                 list(self.post_bottleneck_conv.parameters()))
+        return params
 
     def configure_optimizers(self):
         lr = self.learning_rate
         return self.configure_optimizers_with_lr(lr)
 
     def get_last_layer(self):
-        if self.use_refinement:
-            return self.decoder_2.conv_out.weight
-        else:
-            return self.decoder.conv_out.weight
+        return self.decoder.conv_out.weight
 
     @torch.no_grad()
     def log_images(self, batch, **kwargs):
@@ -368,19 +328,12 @@ class RefinementAE(pl.LightningModule):
             mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
         mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/x.shape[-1]))
 
-        if self.use_refinement:
-            xrec, mask, xraw, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)
-        else:
-            # xrec, mask, xrec_fstg = self(batch)
-            xrec, mask, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)
+        xrec, mask, xrec_fstg = self(batch, mask_in=mask_in, mask_out=mask_out)
         
         log["inputs"] = x
         log["reconstructions"] = xrec
         log["masked_input"] = x * mask
         log['recon_fstg'] = xrec_fstg
-
-        if self.use_refinement:
-            log['recon_raw'] = xraw
 
         return log
 

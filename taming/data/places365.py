@@ -36,8 +36,16 @@ class Places(Dataset):
         for root, dirs, files in os.walk(self.dataroot):
             image_files = glob.glob(os.path.join(root, "*.jpg"))
             data_list += [(path, '_'.join(path.split('/')[-3:])) for path in image_files]
-
         self.data_list = data_list            
+
+        if self.maskroot is not None:
+            data_list = []
+            for root, dirs, files in os.walk(self.maskroot):
+                image_files = glob.glob(os.path.join(root, "*.png"))
+                data_list += image_files
+            self.mask_list = data_list            
+        else:
+            self.mask_list = None
 
     def initialize_processor(self):
         if self.split != "train":
@@ -97,7 +105,12 @@ class Places(Dataset):
             #################
             img_id = int(img_id) - 1 
             #################
-            mask = self.preprocess_mask(readmask(os.path.join(self.maskroot, f"{img_id:06d}.png")))
+            mask_path = os.path.join(self.maskroot, f"{img_id:06d}.png")
+            
+            if not os.path.exists(mask_path):
+                mask_path = self.mask_list[i]
+
+            mask = self.preprocess_mask(readmask(mask_path))
 
         image = self.preprocess_image(img_path)
         segmentation = image

@@ -66,7 +66,6 @@ class RefinementUNet(pl.LightningModule):
                  ):
         super().__init__()
         self.image_key = image_key
-
         self.encoder = Encoder(**ddconfig)       
         self.decoder = Decoder(**ddconfig)
         self.bottleneck_conv = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)
@@ -211,8 +210,8 @@ class RefinementUNet(pl.LightningModule):
         return x.float().to(self.device)
 
     def get_mask(self, shape, device):
-        return box_mask(shape, device, 0.8, det=True)
-        # return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
+        # return box_mask(shape, device, 0.8, det=True)
+        return torch.from_numpy(BatchRandomMask(shape[0], shape[-1])).to(device)
         
     def get_mask_eval(self, shape, device):
         return box_mask(shape, device, 0.5, det=True)
@@ -301,9 +300,18 @@ class RefinementUNet(pl.LightningModule):
                  list(self.bottleneck_conv.parameters()) + 
                  list(self.post_bottleneck_conv.parameters()))
 
+        if not self.freeze_firststage:
+            params_fstg = self.first_stage_model.get_params()
+            params += params_fstg
+
         opt_ae = torch.optim.Adam(params, lr=lr, betas=(0.5, 0.9))
-        opt_disc = torch.optim.Adam(self.loss.discriminator.parameters(),
-                                        lr=lr, betas=(0.5, 0.9))
+
+        disc_params = list(self.loss.discriminator.parameters())
+
+        if not self.freeze_firststage:
+            disc_params += list(self.loss_fstg.discriminator.parameters())
+
+        opt_disc = torch.optim.Adam(disc_params, lr=lr, betas=(0.5, 0.9))
         return [opt_ae, opt_disc], []
 
 

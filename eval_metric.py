@@ -22,7 +22,7 @@ from eval_util import *
 # script for evaluating inpainting performance
 
 # fid2993_full, fid36k5_full, ids_places, kid50k_full, pr50k3_full, ppl2_wend, is50k
-metrics = ['fid36k5_full']
+metrics = ['fid2993_full']
 
 def get_parser(**parser_kwargs):
     def str2bool(v):
