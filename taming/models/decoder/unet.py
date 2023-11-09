@@ -82,11 +82,13 @@ class RefinementUNet(pl.LightningModule):
         if ckpt_path is not None and self.freeze_firststage:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
         
-        if first_stage_config is not None and self.freeze_firststage:
+        if first_stage_config is not None and (ckpt_path is None or self.freeze_firststage):
+            print("Initializing with a pretrained first stage model")
             # initialize the U-Net with vq-vae if not resumed from a checkpoint
-            self.init_first_stage_from_ckpt(first_stage_config, initialize_current=ckpt_path is None)
+            self.init_first_stage_from_ckpt(first_stage_config, initialize_current=True)
 
         if first_stage_config is not None and ckpt_path is not None and not self.freeze_firststage:
+            print("Initializing with a pretrained U-Net model")
             self.first_stage_model = instantiate_from_config(first_stage_config)
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
             self.loss_fstg = self.first_stage_model.loss

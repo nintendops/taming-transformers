@@ -43,7 +43,7 @@ model:
     encoder_config:
       target: taming.models.refinement_ae.MaskPartialEncoderModel
       params:
-        ckpt_path: logs/2023-10-22T03-37-41_partialencoder_cont/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/2023-05-26T15-25-34_places256_partialencoder_1024_cont.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: "image"
@@ -70,7 +70,7 @@ model:
     decoder_config:
       target: taming.models.decoder.refinementAE.RefinementAE
       params:
-        ckpt_path: logs/2023-10-12T23-14-25_beta_decoder_aug/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/beta_decoder_aug.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: image
@@ -104,37 +104,37 @@ model:
             disc_start: 1
             disc_weight: 0.8
     ################## UNet Refinement configuration #####################
-    unet_config:
-      target: taming.models.decoder.unet.RefinementUNet
-      params:
-        ckpt_path: logs/2023-10-27T22-35-05_unet_boxmask_finetune/checkpoints/last.ckpt
-        embed_dim: 256
-        n_embed: 1024
-        image_key: image
-        freeze_firststage: false
-        ddconfig:
-          padding_free: false
-          double_z: false
-          z_channels: 256
-          resolution: 256
-          in_channels: 3
-          out_ch: 3
-          ch: 128
-          ch_mult:
-          - 1
-          - 1
-          - 2
-          - 2
-          - 4
-          num_res_blocks: 2
-          attn_resolutions:
-          - 16
-          dropout: 0.0
+    # unet_config:
+    #   target: taming.models.decoder.unet.RefinementUNet
+    #   params:
+    #     ckpt_path: logs/2023-10-27T22-35-05_unet_boxmask_finetune/checkpoints/last.ckpt
+    #     embed_dim: 256
+    #     n_embed: 1024
+    #     image_key: image
+    #     freeze_firststage: false
+    #     ddconfig:
+    #       padding_free: false
+    #       double_z: false
+    #       z_channels: 256
+    #       resolution: 256
+    #       in_channels: 3
+    #       out_ch: 3
+    #       ch: 128
+    #       ch_mult:
+    #       - 1
+    #       - 1
+    #       - 2
+    #       - 2
+    #       - 4
+    #       num_res_blocks: 2
+    #       attn_resolutions:
+    #       - 16
+    #       dropout: 0.0
     ################## Transformer configuration #########################
     transformer_config:
       target: taming.models.maskgit.MaskGIT
       params:
-        ckpt_path: logs/ckpts/maskgit_ly40.ckpt
+        ckpt_path: logs/2023-09-15T04-43-29_places_maskgit_ly40/checkpoints/last.ckpt
         cond_stage_key: segmentation
         attention_extent: mask
         mask_on_latent: false
@@ -158,7 +158,7 @@ data:
       target: taming.data.places365.Places
       params:
         dataroot: /home/chenh/data/val_large
-        maskroot: /home/chenh/data/masks_val_512_small_eval
+        maskroot: /home/chenh/data/masks_val_512_eval
         crop_size: 256
         rescale: True
         rescale_size: 256

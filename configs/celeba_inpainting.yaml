@@ -70,7 +70,7 @@ model:
     decoder_config:
       target: taming.models.decoder.refinementAE.RefinementAE
       params:
-        ckpt_path: logs/2023-10-26T08-39-37_celeba_decoder/checkpoints/last.ckpt
+        # ckpt_path: logs/ckpts/celeba_decoder_finetuned.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: image
@@ -104,37 +104,37 @@ model:
             disc_start: 1
             disc_weight: 0.8
     ################## UNet Refinement configuration #####################
-    # unet_config:
-    #   target: taming.models.decoder.unet.RefinementUNet
-    #   params:
-    #     ckpt_path: logs/2023-10-27T22-54-23_celeba_decoder_unet/checkpoints/last.ckpt
-    #     embed_dim: 256
-    #     n_embed: 1024
-    #     image_key: image
-    #     freeze_firststage: false
-    #     ddconfig:
-    #       padding_free: false
-    #       double_z: false
-    #       z_channels: 256
-    #       resolution: 256
-    #       in_channels: 3
-    #       out_ch: 3
-    #       ch: 128
-    #       ch_mult:
-    #       - 1
-    #       - 1
-    #       - 2
-    #       - 2
-    #       - 4
-    #       num_res_blocks: 2
-    #       attn_resolutions:
-    #       - 16
-    #       dropout: 0.0
+    unet_config:
+      target: taming.models.decoder.unet.RefinementUNet
+      params:
+        ckpt_path: logs/2023-11-03T02-19-38_celeba_decoder_unet_cont/checkpoints/last.ckpt
+        embed_dim: 256
+        n_embed: 1024
+        image_key: image
+        freeze_firststage: false
+        ddconfig:
+          padding_free: false
+          double_z: false
+          z_channels: 256
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 1
+          - 2
+          - 2
+          - 4
+          num_res_blocks: 2
+          attn_resolutions:
+          - 16
+          dropout: 0.0
     ################## Transformer configuration #########################
     transformer_config:
       target: taming.models.maskgit.MaskGIT
       params:
-        ckpt_path: logs/2023-10-21T01-49-55_celebA_maskGIT/checkpoints/last.ckpt
+        ckpt_path: logs/ckpts/celeba_maskgit_cont.ckpt
         cond_stage_key: segmentation
         attention_extent: mask
         mask_on_latent: false
@@ -166,7 +166,7 @@ data:
       target: taming.data.places365.Places
       params:
         dataroot: /home/chenh/data/celeba_hq/val
-        maskroot: /home/chenh/data/celeba_hq/masks_val_256_small_eval
+        maskroot: /home/chenh/data/celeba_hq/masks_val_256_eval
         crop_size: 256
         rescale: True
         rescale_size: 256

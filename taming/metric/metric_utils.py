@@ -274,6 +274,8 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
 
     # Setup generator and load labels.
     G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
+    # G = opts.G
+
     dataset = opts.dataset # dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
     run_generator = opts.G_callback
 

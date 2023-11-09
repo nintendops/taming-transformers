@@ -178,7 +178,7 @@ class InpaintingMaster(pl.LightningModule):
                 # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
 
         # mask override
-        # mask = box_mask(x.shape, x.device, 0.8, det=True)
+        mask = box_mask(x.shape, x.device, 0.8, det=True)
 
         ###########################
         # quant_gt, _, info = VQModel.encode(x)

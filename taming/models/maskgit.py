@@ -225,10 +225,10 @@ class MaskGIT(pl.LightningModule):
     @torch.no_grad()
     def sample(self, x, c, 
                sampling_ratio=0.2, 
-               temperature=0.5, 
+               temperature=1.0, 
                sample=True, 
                temperature_degradation=0.9, 
-               top_k=50, 
+               top_k=None, 
                callback=lambda k: None, 
                scheduler = 'cosine',
                t_scheduler=lambda t,k,d: t*(d**k),

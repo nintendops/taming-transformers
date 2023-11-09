@@ -2,7 +2,7 @@ model:
   base_learning_rate: 4.5e-06
   target: taming.models.decoder.unet.RefinementUNet
   params:
-    ckpt_path: logs/2023-10-30T14-29-47_celeba_decoder_unet/checkpoints/last.ckpt
+    ckpt_path: logs/2023-10-30T17-50-13_celeba_decoder_unet/checkpoints/last.ckpt
     embed_dim: 256
     n_embed: 1024
     image_key: image
@@ -29,7 +29,7 @@ model:
     first_stage_config:
       target: taming.models.decoder.refinementAE.RefinementAE
       params:
-        ckpt_path: logs/2023-10-26T08-39-37_celeba_decoder/checkpoints/last.ckpt
+        # ckpt_path: logs/2023-10-26T08-39-37_celeba_decoder/checkpoints/last.ckpt
         embed_dim: 256
         n_embed: 1024
         image_key: image
