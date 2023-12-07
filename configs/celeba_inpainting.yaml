@@ -166,7 +166,7 @@ data:
       target: taming.data.places365.Places
       params:
         dataroot: /home/chenh/data/celeba_hq/val
-        maskroot: /home/chenh/data/celeba_hq/masks_val_256_eval
+        maskroot: /home/chenh/data/celeba_hq/masks_val_256_small_eval
         crop_size: 256
         rescale: True
         rescale_size: 256

@@ -125,6 +125,7 @@ class Places(Dataset):
 
         if mask is not None:
             example["mask"] = mask
+            example["mask_path"] = mask_path
 
         return example
 

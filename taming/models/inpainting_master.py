@@ -157,6 +157,7 @@ class InpaintingMaster(pl.LightningModule):
         '''
             forward with the complete model
         '''
+        use_vanilla = False
         VQModel, Encoder, Transformer, Unet = self.helper_model
         VQModel = VQModel.to(self.device)
         Encoder = Encoder.to(self.device)
@@ -178,47 +179,29 @@ class InpaintingMaster(pl.LightningModule):
                 # mask = torch.from_numpy(BatchRandomMask(x.shape[0], x.shape[-1], hole_range=[0,0.5])).to(x.device)
 
         # mask override
-        mask = box_mask(x.shape, x.device, 0.8, det=True)
-
-        ###########################
-        # quant_gt, _, info = VQModel.encode(x)
-        # dec, _ = self.current_model(batch, 
-        #                             quant=quant_gt, 
-        #                             mask_in=mask, 
-        #                             mask_out=None,
-        #                             return_fstg=False)
-        # dec = mask * x + (1 - mask) * dec
-        # return dec, mask
-        # z_indices_gt = info[2].reshape(x.shape[0], -1)
-        ###########################
+        # mask = box_mask(x.shape, x.device, 0.8, det=True)
 
         x_gt = x        
         x = mask * x
 
-        ###########################
-        # quant_ref, _, info, mask_out_ref = VQModel.encode(x, mask=mask)
-        # z_indices_ref = info[2].reshape(x.shape[0], -1)
-        ###########################
-
         # encoding image
-        quant_z, _, info, mask_out = Encoder.encode(x, mask)
+        if use_vanilla:
+            quant_z, _, info = VQModel.encode(x)
+            mask_out = torch.nn.functional.interpolate(mask.float(), (16,16))
+        else:
+            quant_z, _, info, mask_out = Encoder.encode(x, mask)
+
         mask_out = mask_out.reshape(x.shape[0], -1)
         z_indices = info[2].reshape(x.shape[0], -1)
 
-
         ## PERFECT ENCODER #########################
-        # quant_gt, _, info_gt = VQModel.encode(x_gt)
-        # z_indices_gt = info_gt[2].reshape(x.shape[0], -1)
-        # z_indices = z_indices_gt.int() * mask_out.int()
+        quant_gt, _, info_gt = VQModel.encode(x_gt)
+        z_indices_gt = info_gt[2].reshape(x.shape[0], -1)
+        z_indices = z_indices_gt.int() * mask_out.int()
         ############################################
 
         # inferring missing codes given the downsampled mask
         z_indices_complete = Transformer.forward_to_indices(batch, z_indices, mask_out, det=False)
-
-        #########################
-        # z_indices_complete = Transformer.forward_to_indices(batch, z_indices_ref, mask_out_ref)
-        # z_indices_complete = z_indices_gt * ( 1 - mask_out) + z_indices * mask_out
-        #######################
 
         # getting the features from the codebook with the indices
         B, C, H, W = quant_z.shape
@@ -228,19 +211,22 @@ class InpaintingMaster(pl.LightningModule):
         if use_vq_decoder:
             return VQModel.decode(quant_z_complete)
         else:
-            # mask_out_decoder = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=H/x.shape[-1]))
-            dec, _ = self.current_model(batch, 
-                                        quant=quant_z_complete, 
-                                        mask_in=mask, 
-                                        mask_out=mask_out.reshape(B, 1, H, W),
-                                        return_fstg=False)
+            if use_vanilla:
+                dec = VQModel.decode(quant_z_complete)
+            else:
+                # mask_out_decoder = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=H/x.shape[-1]))
+                dec, _ = self.current_model(batch, 
+                                            quant=quant_z_complete, 
+                                            mask_in=mask, 
+                                            mask_out=mask_out.reshape(B, 1, H, W),
+                                            return_fstg=False)
 
 
         if recomposition:
             # linear blending
             dec = mask * x + (1 - mask) * dec
 
-        if Unet is not None and use_unet:
+        if Unet is not None and use_unet and not use_vanilla:
             Unet = Unet.to(self.device)
             dec = Unet.refine(dec, mask)
 

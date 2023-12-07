@@ -96,13 +96,13 @@ class MaskPartialEncoderModel(pl.LightningModule):
         self.first_stage_model = model
         self.quantize = model.quantize
 
-    def encode_logits(self, x, mask):
-        h, mask_out = self.encoder(x, mask)
+    def encode_logits(self, x, mask, clamp_ratio=None):
+        h, mask_out = self.encoder(x, mask, clamp_ratio=clamp_ratio)
         logits, mask_out = self.cls_head(h, mask_out)
         return logits, mask_out
 
     @torch.no_grad()
-    def encode(self, x, mask=None, return_ref=False):       
+    def encode(self, x, mask=None, clamp_ratio=None, return_ref=False):       
         temperature = 1.0
         # quant_z_gt, _, info_gt = self.first_stage_model.encode(x)        
 
@@ -114,7 +114,7 @@ class MaskPartialEncoderModel(pl.LightningModule):
         x = x * mask_in 
         quant_z_ref, _, info = self.first_stage_model.encode(x)       
         indices_ref = info[2].reshape(-1)
-        logits, mask_out = self.encode_logits(x, mask_in)     
+        logits, mask_out = self.encode_logits(x, mask_in, clamp_ratio=clamp_ratio)     
         B, L, H, W = logits.shape
         logits = logits.permute(0,2,3,1).reshape(B, -1, L)
         probs = F.softmax(logits / temperature, dim=-1)

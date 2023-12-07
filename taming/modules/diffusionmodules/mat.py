@@ -88,7 +88,7 @@ class Conv2dLayerPartial(nn.Module):
         self.stride = stride
         self.padding = kernel_size // 2 if kernel_size % 2 == 1 else 0
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, clamp_ratio=None):
         if mask is not None:
             with torch.no_grad():
                 if self.weight_maskUpdater.type() != x.type():
@@ -142,7 +142,11 @@ class Conv2dLayerPartialRestrictive(nn.Module):
         # TODO: for now only supporting kernel size 3, 1 in our implementations
         # assert kernel_size == 3 or kernel_size == 1
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, clamp_ratio=None):
+
+        if clamp_ratio is None:
+            clamp_ratio = self.clamp_ratio
+
         if mask is not None:
             with torch.no_grad():
                 if self.weight_maskUpdater.type() != x.type():
@@ -156,10 +160,9 @@ class Conv2dLayerPartialRestrictive(nn.Module):
                 # the larger the ratio, the more information the block has
                 mask_ratio_true = update_mask / um1
 
-                # update_mask_restrictive = (mask_ratio_true > self.clamp_ratio).float()
 
                 if self.stride > 1:
-                    update_mask_restrictive = F.interpolate(mask, scale_factor=1/self.stride, mode="bilinear") > self.clamp_ratio
+                    update_mask_restrictive = F.interpolate(mask, scale_factor=1/self.stride, mode="bilinear") > clamp_ratio
                     update_mask_restrictive = update_mask_restrictive.float()
                 else:
                     update_mask_restrictive = mask

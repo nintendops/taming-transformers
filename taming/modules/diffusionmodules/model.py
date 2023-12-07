@@ -204,22 +204,22 @@ class PartialResnetBlock(nn.Module):
                                                 simple_conv=simple_conv
                                                 )
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, clamp_ratio=None):
         h = x
         m = mask
         h = self.norm1(h)
         h = nonlinearity(h)
-        h, m = self.conv1(h, m)
+        h, m = self.conv1(h, m, clamp_ratio=clamp_ratio)
         h = self.norm2(h)
         h = nonlinearity(h)
         h = self.dropout(h)
-        h, m = self.conv2(h, m)
+        h, m = self.conv2(h, m, clamp_ratio=clamp_ratio)
 
         if self.in_channels != self.out_channels:
             if self.use_conv_shortcut:
-                x, m = self.conv_shortcut(x, m)
+                x, m = self.conv_shortcut(x, m, clamp_ratio=clamp_ratio)
             else:
-                x, m = self.nin_shortcut(x, m)
+                x, m = self.nin_shortcut(x, m, clamp_ratio=clamp_ratio)
 
         return x+h, m
 
@@ -764,34 +764,34 @@ class PartialEncoder(nn.Module):
         self.clamp_counter += 1
         return self.clamp_ratio if self.clamp_counter >= self.clamp_start else 0.1
 
-    def forward(self, x, masks_in):
+    def forward(self, x, masks_in, clamp_ratio=None):
         m = masks_in.float()
         x = torch.cat([m - 0.5, x * m], dim=1)
 
         # downsampling
-        h, m = self.conv_in(x, m)
+        h, m = self.conv_in(x, m, clamp_ratio=clamp_ratio)
         hs = [h]
 
         for i_level in range(self.num_resolutions):
             for i_block in range(self.num_res_blocks):
-                h, m = self.down[i_level].block[i_block](hs[-1], m)
+                h, m = self.down[i_level].block[i_block](hs[-1], m, clamp_ratio=clamp_ratio)
                 if len(self.down[i_level].attn) > 0:
                     h = self.down[i_level].attn[i_block](h)
                 hs.append(h)
             if i_level != self.num_resolutions-1:
-                h, m = self.down[i_level].downsample(hs[-1], m)
+                h, m = self.down[i_level].downsample(hs[-1], m, clamp_ratio=clamp_ratio)
                 hs.append(h)
 
         # middle
         h = hs[-1]
-        h, m = self.mid.block_1(h, m)
+        h, m = self.mid.block_1(h, m, clamp_ratio=clamp_ratio)
         h = self.mid.attn_1(h)
-        h, m = self.mid.block_2(h, m)
+        h, m = self.mid.block_2(h, m, clamp_ratio=clamp_ratio)
 
         # end
         h = self.norm_out(h)
         h = nonlinearity(h)
-        h, m = self.conv_out(h, m)
+        h, m = self.conv_out(h, m, clamp_ratio=clamp_ratio)
         mask_out = m
         return h, mask_out
 
