@@ -50,6 +50,7 @@ class RefinementUNet(pl.LightningModule):
                  ddconfig,
                  n_embed,
                  embed_dim,
+                 input_res = 256,
                  lossconfig = None,
                  first_stage_config = None,
                  first_stage_model_type='vae', # vae | transformer
@@ -62,10 +63,11 @@ class RefinementUNet(pl.LightningModule):
                  monitor=None,
                  remap=None,
                  sane_index_shape=False,  # tell vector quantizer to return indices as bhw
-                 freeze_firststage=True,
+                 freeze_firststage=True
                  ):
         super().__init__()
         self.image_key = image_key
+        self.input_res = input_res
         self.encoder = Encoder(**ddconfig)       
         self.decoder = Decoder(**ddconfig)
         self.bottleneck_conv = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)
@@ -85,12 +87,14 @@ class RefinementUNet(pl.LightningModule):
         if first_stage_config is not None and (ckpt_path is None or self.freeze_firststage):
             print("Initializing with a pretrained first stage model")
             # initialize the U-Net with vq-vae if not resumed from a checkpoint
-            self.init_first_stage_from_ckpt(first_stage_config, initialize_current=True)
+            self.init_first_stage_from_ckpt(first_stage_config, initialize_current=False)
 
         if first_stage_config is not None and ckpt_path is not None and not self.freeze_firststage:
             print("Initializing with a pretrained U-Net model")
             self.first_stage_model = instantiate_from_config(first_stage_config)
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
+
+        if not self.freeze_firststage:
             self.loss_fstg = self.first_stage_model.loss
 
         self.image_key = image_key
@@ -177,24 +181,26 @@ class RefinementUNet(pl.LightningModule):
 
         input = input_raw * mask
 
+        # rescale to specified input resolution
+        input_lr = torch.nn.functional.interpolate(input, (self.input_res, self.input_res))
+        mask_lr = torch.nn.functional.interpolate(mask, (self.input_res, self.input_res))
+        
         if self.first_stage_model_type == 'transformer':
             x_raw, quant_fstg = self.first_stage_model.forward_to_recon(batch, 
-                                                                        mask=mask, 
+                                                                        mask=mask_lr, 
                                                                         det=False, 
                                                                         return_quant=True)    
             x_comp = input + (1 - mask) * x_raw
         elif self.first_stage_model_type == 'vae':
-            x_raw, _ = self.first_stage_model(input_raw)
-            x_comp = input + (1 - mask) * x_raw
+            x_raw, _ = self.first_stage_model(input_lr)
+            x_comp = input + (1 - mask_lr) * x_raw
         elif self.first_stage_model_type == 'decoder':
-
             if self.freeze_firststage:
-                x_raw, mask = self.first_stage_model.generate(batch)
+                # this create a lr mask since we have scaled the batch image
+                x_raw, _ = self.first_stage_model.generate(batch, rescale=self.input_res, mask_in=mask_lr, recomposition=False)
             else:
-                x_raw, mask = self.first_stage_model(batch, return_fstg=False)
-
-            input = input_raw * mask
-            x_comp = x_raw
+                x_raw, _ = self.first_stage_model(batch, rescale=self.input_res, mask_in=mask_lr, recomposition=False, return_fstg=False)
+            x_comp = input + (1 - mask) * x_raw
         else:
             raise Exception(f"Unrecognized model type {self.first_stage_model_type}")
 

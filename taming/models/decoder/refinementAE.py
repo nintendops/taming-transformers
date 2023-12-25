@@ -35,6 +35,7 @@ class RefinementAE(pl.LightningModule):
             refine given a recomposition of the inferred masked region and the original image
     '''
     def __init__(self,
+                 edconfig,
                  ddconfig,
                  lossconfig,
                  n_embed,
@@ -64,12 +65,13 @@ class RefinementAE(pl.LightningModule):
         if restriction:
             ddconfig = dict(**ddconfig)
             ddconfig['conv_choice'] = Conv2dLayerPartial
-            self.encoder = PartialEncoder(**ddconfig)
+            self.encoder = PartialEncoder(**edconfig)
         else:
-            self.encoder = MaskEncoder(**ddconfig)
+            self.encoder = MaskEncoder(**edconfig)
         ##########################################
        
         self.decoder = Decoder(**ddconfig)
+
         self.bottleneck_conv = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)
         self.post_bottleneck_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
 
@@ -77,7 +79,8 @@ class RefinementAE(pl.LightningModule):
         self.first_stage_model_type = first_stage_model_type
         
         if first_stage_config is not None:
-            self.init_first_stage_from_ckpt(first_stage_config, initialize_decoder=ckpt_path is None)
+            self.init_first_stage_from_ckpt(first_stage_config, initialize_decoder=False)            
+            # self.init_first_stage_from_ckpt(first_stage_config, initialize_decoder=ckpt_path is None)
 
         self.image_key = image_key
         if colorize_nlabels is not None:
@@ -140,19 +143,26 @@ class RefinementAE(pl.LightningModule):
         return feat
 
     @torch.no_grad()
-    def generate(self, batch, mask=None):
-        return self(batch, mask_in=mask, return_fstg=False)
+    def generate(self, batch, **kwargs):
+        return self(batch, **kwargs)
 
-    def forward(self, batch, quant=None, mask_in=None, mask_out=None, return_fstg=True, use_noise=True, debug=False):
+    def forward(self, batch, rescale=None, recomposition=True, quant=None, mask_in=None, mask_out=None, return_fstg=True, use_noise=True, debug=False):
 
-        input_raw = self.get_input(batch, self.image_key)
+        input_gt = self.get_input(batch, self.image_key)
+
+        if mask_in is None:
+            mask_gt = self.get_mask([input_gt.shape[0], 1, input_gt.shape[2], input_gt.shape[3]], input_gt.device)
+        else:
+            mask_gt = mask_in
+
+        if rescale is not None:
+            input_raw = torch.nn.functional.interpolate(input_gt, (rescale, rescale))
+            mask = torch.nn.functional.interpolate(mask_gt, (rescale, rescale))
+        else:
+            input_raw = input_gt
+            mask = mask_gt
 
         # first, get a composition of quantized reconstruction and the original image
-        if mask_in is None:
-            mask = self.get_mask([input_raw.shape[0], 1, input_raw.shape[2], input_raw.shape[3]], input_raw.device)
-        else:
-            mask = mask_in
-
         input = input_raw * mask
 
         ###### for comparison only ################
@@ -197,14 +207,19 @@ class RefinementAE(pl.LightningModule):
         h = mask_out * h + quant * (1 - mask_out) * 0.5 + h * (1 - mask_out) * 0.5
 
         dec = self.decode(h)
-        dec = input + (1 - mask) * dec
+
+        # if dec.shape[-1] != mask.shape[-1]:
+        #     mask = torch.nn.functional.interpolate(mask, scale_factor=dec.shape[-1] / mask.shape[-1])
+
+        if recomposition:
+            dec = input_gt + (1 - mask_gt) * dec
 
         if debug:
-            return dec, mask, mask_out, quant * (1 - mask_out), h * (1 - mask_out)
+            return dec, mask_gt, mask_out, quant * (1 - mask_out), h * (1 - mask_out)
         elif return_fstg:                
-            return dec, mask, x_comp
+            return dec, mask_gt, x_comp
         else:
-            return dec, mask
+            return dec, mask_gt
 
     def get_input(self, batch, k):
         x = batch[k]
