@@ -79,8 +79,8 @@ class RefinementAE(pl.LightningModule):
         self.first_stage_model_type = first_stage_model_type
         
         if first_stage_config is not None:
-            self.init_first_stage_from_ckpt(first_stage_config, initialize_decoder=False)            
-            # self.init_first_stage_from_ckpt(first_stage_config, initialize_decoder=ckpt_path is None)
+            # self.init_first_stage_from_ckpt(first_stage_config, initialize_decoder=False)            
+            self.init_first_stage_from_ckpt(first_stage_config, initialize_decoder=ckpt_path is None)
 
         self.image_key = image_key
         if colorize_nlabels is not None:

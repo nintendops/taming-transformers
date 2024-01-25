@@ -47,6 +47,7 @@ class RefinementUNet(pl.LightningModule):
             refine a recomposed image
     '''
     def __init__(self,
+                 edconfig,
                  ddconfig,
                  n_embed,
                  embed_dim,
@@ -68,7 +69,7 @@ class RefinementUNet(pl.LightningModule):
         super().__init__()
         self.image_key = image_key
         self.input_res = input_res
-        self.encoder = Encoder(**ddconfig)       
+        self.encoder = Encoder(**edconfig)       
         self.decoder = Decoder(**ddconfig)
         self.bottleneck_conv = torch.nn.Conv2d(ddconfig["z_channels"], embed_dim, 1)
         self.post_bottleneck_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
@@ -190,17 +191,17 @@ class RefinementUNet(pl.LightningModule):
                                                                         mask=mask_lr, 
                                                                         det=False, 
                                                                         return_quant=True)    
-            x_comp = input + (1 - mask) * x_raw
+            x_comp = input_lr + (1 - mask_lr) * x_raw
         elif self.first_stage_model_type == 'vae':
             x_raw, _ = self.first_stage_model(input_lr)
-            x_comp = input + (1 - mask_lr) * x_raw
+            x_comp = input_lr + (1 - mask_lr) * x_raw
         elif self.first_stage_model_type == 'decoder':
             if self.freeze_firststage:
                 # this create a lr mask since we have scaled the batch image
                 x_raw, _ = self.first_stage_model.generate(batch, rescale=self.input_res, mask_in=mask_lr, recomposition=False)
             else:
                 x_raw, _ = self.first_stage_model(batch, rescale=self.input_res, mask_in=mask_lr, recomposition=False, return_fstg=False)
-            x_comp = input + (1 - mask) * x_raw
+            x_comp = input_lr + (1 - mask_lr) * x_raw
         else:
             raise Exception(f"Unrecognized model type {self.first_stage_model_type}")
 
@@ -237,8 +238,11 @@ class RefinementUNet(pl.LightningModule):
                                             mask=mask, last_layer=self.get_last_layer(), split="train")
 
             if not self.freeze_firststage:
-                aeloss_fstg, log_dict_ae_fstg = self.loss_fstg(x, x_fstg, optimizer_idx, self.global_step,
-                                                               mask=mask, last_layer=self.first_stage_model.get_last_layer(), split="train")
+                x_lr = torch.nn.functional.interpolate(x, (self.input_res, self.input_res)) 
+                mask_lr = torch.nn.functional.interpolate(mask, (self.input_res, self.input_res)) 
+                
+                aeloss_fstg, log_dict_ae_fstg = self.loss_fstg(x_lr, x_fstg, optimizer_idx, self.global_step,
+                                                               mask=mask_lr, last_layer=self.first_stage_model.get_last_layer(), split="train")
                 aeloss = aeloss + aeloss_fstg
 
             self.log("train/aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
@@ -250,8 +254,10 @@ class RefinementUNet(pl.LightningModule):
             discloss, log_dict_disc = self.loss(x, xrec, optimizer_idx, self.global_step,
                                                 mask=mask, last_layer=self.get_last_layer(), split="train")
             if not self.freeze_firststage:
-                discloss_fstg, log_dict_disc_fstg = self.loss_fstg(x, x_fstg, optimizer_idx, self.global_step,
-                                                                   mask=mask, last_layer=self.first_stage_model.get_last_layer(), split="train")
+                x_lr = torch.nn.functional.interpolate(x, (self.input_res, self.input_res)) 
+                mask_lr = torch.nn.functional.interpolate(mask, (self.input_res, self.input_res)) 
+                discloss_fstg, log_dict_disc_fstg = self.loss_fstg(x_lr, x_fstg, optimizer_idx, self.global_step,
+                                                                   mask=mask_lr, last_layer=self.first_stage_model.get_last_layer(), split="train")
                 discloss = discloss + discloss_fstg
 
             self.log("train/discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
@@ -279,16 +285,14 @@ class RefinementUNet(pl.LightningModule):
         return self.log_dict
 
     def test_step(self, batch, batch_idx):
-        from PIL import Image
-
         # We are always making assumption that the latent block is 16x16 here
+        x = self.get_input(batch, self.image_key)
         mask_in = self.get_mask([x.shape[0], 1, x.shape[-2], x.shape[-1]], x.device).float()
         mask_out = torch.round(torch.nn.functional.interpolate(mask_in, scale_factor=16/x.shape[-1]))
-
-        x = self.get_input(batch, self.image_key)
         xrec, mask = self(batch, mask_in=mask_in, mask_out=mask_out, return_fstg=False)
         aeloss, log_dict_ae = self.loss(x, xrec, 0, self.global_step,
                                             mask=mask, last_layer=self.get_last_layer(), split="val")
+
         discloss, log_dict_disc = self.loss(x, xrec, 1, self.global_step,
                                             mask=mask, last_layer=self.get_last_layer(), split="val")
         rec_loss = log_dict_ae["val/rec_loss"]
@@ -298,8 +302,6 @@ class RefinementUNet(pl.LightningModule):
                    prog_bar=True, logger=True, on_step=True, on_epoch=True, sync_dist=True)
         self.log_dict(log_dict_ae)
         self.log_dict(log_dict_disc)
-        self.debug_log_image(x, batch_idx, tag='gt')
-        self.debug_log_image(xrec, batch_idx)
         return self.log_dict
 
     def configure_optimizers_with_lr(self, lr):
